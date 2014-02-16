@@ -1,0 +1,15 @@
+// Michael Racine (mrracine)
+// Project4
+
+- Messages will be of fixed size and processed in FIFO order
+- Every ordinary process will have a mailbox
+- Any thread or process can send, only parent processes can receive
+- Intercept 3 syscalls defined in Project0
+- Likely necessary to intercept exit syscall and possibly others
+
+- Mailbox: kernel space object implemented by LKM
+	- Dynamically allocated
+	- Created on first attempt of any process to use it
+	- Destroyed when main process exits
+
+- Write a user-space test program
