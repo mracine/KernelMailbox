@@ -1,6 +1,8 @@
 // Michael Racine (mrracine)
 // Project4
 
+- Test git changes here
+
 - Messages will be of fixed size and processed in FIFO order
 - Every ordinary process will have a mailbox
 - Any thread or process can send, only parent processes can receive
@@ -13,3 +15,4 @@
 	- Destroyed when main process exits
 
 - Write a user-space test program
+
