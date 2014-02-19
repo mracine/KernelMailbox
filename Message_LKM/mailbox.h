@@ -1,4 +1,4 @@
-/* Michael Racine (mrracine)
+/* Daniel Benson (djbenson) and Michael Racine (mrracine)
  * Project4
  */
 
@@ -7,10 +7,13 @@
 
 #include <stdbool.h>
 #include <linux/types.h>
+#include <linux/slab.h>
 
 #define NO_BLOCK 0
 #define BLOCK   1
 #define MAX_MSG_SIZE 128
+#define MIN_MAILBOX_SIZE 32
+#define MAX_MAILBOX_SIZE 64
 
 /**
  * Functions for msgs
@@ -20,10 +23,34 @@ asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block);
 asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block);
 
 /**
- * functions for maintaining mailboxes
+ * Functions for maintaining mailboxes
  * 
  * */
 asmlinkage long ManageMailbox(bool stop, int *count);
+/**
+ * Hashtable implementation
+ *
+ * */
+typedef struct mailbox_s {
+	int key;
+	char **messages;
+	struct mailbox_s *next;
+} mailbox; // struct mailbox
+
+typedef struct hashtable_s {
+	int size;
+	int boxNum;
+	mailbox **mailboxes;
+} hashtable; // struct hashtable
+
+hashtable *create(void); // Initialize table to 16 mailboxes
+int insert(hashtable *h, int key);
+mailbox *getBox(hashtable *h, int key);
+int remove(hashtable *h, int key);
+mailbox *createMailbox(int key);
+
+extern struct kmem_cache *cache;
+extern hashtable *ht;
 
 /**
  * error codes pertaining to mailboxes
@@ -38,4 +65,3 @@ asmlinkage long ManageMailbox(bool stop, int *count);
 #define MAILBOX_ERROR		1007
 
 #endif
-

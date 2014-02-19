@@ -1,4 +1,4 @@
-// Michael Racine (mrracine)
+// Daniel Benson (djbenson) and Michael Racine (mrracine)
 // Project4
 
 // We need to define __KERNEL__ and MODULE to be in Kernel space
@@ -12,25 +12,136 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/syscalls.h>
+#include <linux/types.h>
+#include <linux/slab.h>
 #include <linux/mailbox.h>
 
 unsigned long **sys_call_table;
+struct kmem_cache *cache = NULL;
+hashtable *ht = NULL;
 
 asmlinkage long (*ref_cs3013_syscall1)(void);
 asmlinkage long (*ref_cs3013_syscall2)(void);
 asmlinkage long (*ref_cs3013_syscall3)(void);
 
 asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block) {
+	if(cache == NULL){
+		cache = kmem_cache_create("Mailbox", sizeof(mailbox) + (MAX_MSG_SIZE*32), 0, 0, NULL);
+	}
+
 	return 0;
 }	// asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block)
 
-asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block){
+asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block) {
+	if(cache == NULL){
+		cache = kmem_cache_create("Mailbox", sizeof(mailbox) + (MAX_MSG_SIZE*32), 0, 0, NULL);
+	}
+
 	return 0;
 }	// asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block)
 
 asmlinkage long ManageMailbox(bool stop, int *count){
+	if(cache == NULL){
+		cache = kmem_cache_create("Mailbox", sizeof(mailbox) + (MAX_MSG_SIZE*32), 0, 0, NULL);
+	}
+
 	return 0;
 }	// asmlinkage long ManageMailbox(bool stop, int *count)
+
+mailbox *createMailbox(int key){
+	mailbox *newBox = (mailbox *)kmem_cache_alloc(cache, GFP_KERNEL);
+	newBox->key = key;
+	newBox->next = NULL;
+	return newBox;
+}
+
+hashtable *create(void){
+	int i;
+	hashtable *newHash;
+
+	if((newHash = (hashtable *)kmalloc(sizeof(hashtable), GFP_KERNEL)) == NULL)
+		return NULL;
+
+	if((newHash->mailboxes = (mailbox **)kmalloc(16*sizeof(mailbox *), GFP_KERNEL)) == NULL)
+		return NULL;
+
+	for(i = 0; i < 16; i++){
+		newHash->mailboxes[i] = NULL;
+	}
+
+	newHash->size = 16;
+	return newHash;
+}
+
+int insert(hashtable *h, int key){
+	int i;
+	mailbox *next, *last;
+	next = h->mailboxes[0];
+
+	while(next != NULL){
+		last = next;
+		next = next->next;
+	}
+
+	next = createMailbox(key);
+	last->next = next;
+
+	if(h->size <=  h->boxNum){
+		for(i = h->boxNum; i < h->size + 16; i++){
+			h->mailboxes[i] = (mailbox *)kmalloc(sizeof(mailbox *), GFP_KERNEL);
+			h->mailboxes[i] = NULL;
+		}
+
+		h->size += 16;
+	}
+
+	h->mailboxes[h->boxNum] = next;
+	h->boxNum++;
+	return 0;
+}
+
+mailbox *getBox(hashtable *h, int key){
+	mailbox *next = h->mailboxes[0];
+
+	while(next != NULL){
+		if(next->key == key){
+			return next;
+		}
+
+		next = next->next;
+	}
+
+	return NULL;
+}
+
+int remove(hashtable *h, int key){
+	int i = 0;
+	int j;
+	mailbox *temp = NULL;
+	mailbox *prev = h->mailboxes[0];
+	mailbox *next = h->mailboxes[0];
+
+	while(next != NULL){
+		if(next->key == key){
+			temp = next->next;
+			prev->next = temp;
+
+			for(j = i; j < h->size; j++){
+				h->mailboxes[j] = h->mailboxes[j+1];
+			}
+
+			kmem_cache_free(cache, &next);
+			h->boxNum--;
+			return 0;
+		}
+
+		i++;
+		prev = next;
+		next = next->next;
+	}
+
+	return -1;
+}
 
 // Used to find the system call table
 // #DO NOT MODIFY
@@ -142,4 +253,3 @@ static void __exit interceptor_end(void) {
 
 module_init(interceptor_start);
 module_exit(interceptor_end);
-
