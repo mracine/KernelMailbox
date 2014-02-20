@@ -8,7 +8,7 @@ CFLAGS = -g -Wall
 all: testmailbox1 testmailbox2 testmailbox3 testmailbox4 testmailbox5 testmailbox6 testmailbox7
 
 
-mailbox.o: mailbox.c mailbox.h
+mailbox.o: mailbox.c
 	gcc -Wall -c $(CFLAGS) mailbox.c
 
 testmailbox1: testmailbox1.o mailbox.o

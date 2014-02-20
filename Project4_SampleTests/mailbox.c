@@ -8,28 +8,28 @@
 
 #include "mailbox.h"
 
-#define __NR_mailbox_send	341
-#define __NR_mailbox_rcv	342
-#define __NR_mailbox_manage	343
+#define __NR_cs3013_syscall1 349
+#define __NR_cs3013_syscall2 350
+#define __NR_cs3013_syscall3 351
 
 /**
  * Functions for msgs
  * 
  * */
-int SendMsg(pid_t dest, void *msg, int len, bool block) {
-  return syscall(__NR_mailbox_send, dest, msg, len, block);
+long SendMsg(pid_t dest, void *msg, int len, bool block) {
+  return syscall(__NR_cs3013_syscall1, dest, msg, len, block);
 } 	// int SendMsg
 
-int RcvMsg(pid_t *sender, void *msg, int *len, bool block){
-  return syscall(__NR_mailbox_rcv, sender, msg, len, block);
+long RcvMsg(pid_t *sender, void *msg, int *len, bool block){
+  return syscall(__NR_cs3013_syscall2, sender, msg, len, block);
 }	// int RcvMsg
 
 /**
  * functions for maintaining mailboxes
  * 
  * */
-int ManageMailbox(bool stop, int *count){
-  return syscall(__NR_mailbox_manage, stop, count);
+long ManageMailbox(bool stop, int *count){
+  return syscall(__NR_cs3013_syscall3, stop, count);
 }	// int ManageMailbox
 
 

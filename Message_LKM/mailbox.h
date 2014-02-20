@@ -12,8 +12,9 @@
 #define NO_BLOCK 0
 #define BLOCK   1
 #define MAX_MSG_SIZE 128
-#define MIN_MAILBOX_SIZE 32
 #define MAX_MAILBOX_SIZE 64
+#define FALSE 0
+#define TRUE 1
 
 /**
  * Functions for msgs
@@ -33,6 +34,8 @@ asmlinkage long ManageMailbox(bool stop, int *count);
  * */
 typedef struct mailbox_s {
 	int key;
+	int msgNum;
+	bool stopped;
 	char **messages;
 	struct mailbox_s *next;
 } mailbox; // struct mailbox
@@ -48,6 +51,8 @@ int insert(hashtable *h, int key);
 mailbox *getBox(hashtable *h, int key);
 int remove(hashtable *h, int key);
 mailbox *createMailbox(int key);
+int insertMsg(int dest, char *msg, int len, bool block);
+int removeMsg(int *sender, void *msg, int *len, bool block);
 
 extern struct kmem_cache *cache;
 extern hashtable *ht;

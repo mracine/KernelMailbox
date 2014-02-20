@@ -15,9 +15,11 @@
 #include <linux/types.h>
 #include <linux/slab.h>
 #include <linux/mailbox.h>
+#include <linux/string.h>
 
 unsigned long **sys_call_table;
-struct kmem_cache *cache = NULL;
+struct kmem_cache *mailbox_cache = NULL;
+struct kmem_cache *message_cache = NULL;
 hashtable *ht = NULL;
 
 asmlinkage long (*ref_cs3013_syscall1)(void);
@@ -25,59 +27,185 @@ asmlinkage long (*ref_cs3013_syscall2)(void);
 asmlinkage long (*ref_cs3013_syscall3)(void);
 
 asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block) {
-	if(cache == NULL){
-		cache = kmem_cache_create("Mailbox", sizeof(mailbox) + (MAX_MSG_SIZE*32), 0, 0, NULL);
+	int err;
+
+	// Init hashtable
+	if(mailbox_cache == NULL){
+		mailbox_cache = kmem_cache_create("mailbox_cache", sizeof(mailbox), 0, 0, NULL);
+		ht = create();
+	}
+
+	if(message_cache == NULL){
+		message_cache = kmem_cache_create("message_cache", MAX_MSG_SIZE, 0, 0, NULL);
+	}
+
+	if((getBox(ht, dest)) == NULL){
+		createMailbox(dest);
+	}
+
+	err = insertMsg(dest, (char *)msg, len, block);
+
+	if(err != 0){
+		return err;
 	}
 
 	return 0;
 }	// asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block)
 
 asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block) {
-	if(cache == NULL){
-		cache = kmem_cache_create("Mailbox", sizeof(mailbox) + (MAX_MSG_SIZE*32), 0, 0, NULL);
+	int err;
+	void *newMsg;
+
+	// Init hashtable
+	if(mailbox_cache == NULL){
+		mailbox_cache = kmem_cache_create("mailbox_cache", sizeof(mailbox), 0, 0, NULL);
+		ht = create();
+	}
+
+	if(message_cache == NULL){
+		message_cache = kmem_cache_create("message_cache", MAX_MSG_SIZE, 0, 0, NULL);
+	}
+
+	err = removeMsg(sender, newMsg, len, block);
+
+	if(err != 0){
+		return err;
+	}
+
+	if(copy_to_user(msg, &newMsg, (unsigned long)*len)){
+		return EFAULT;
 	}
 
 	return 0;
 }	// asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block)
 
 asmlinkage long ManageMailbox(bool stop, int *count){
-	if(cache == NULL){
-		cache = kmem_cache_create("Mailbox", sizeof(mailbox) + (MAX_MSG_SIZE*32), 0, 0, NULL);
+	// mailbox *m = getBox(ht, dest);
+
+	// Init hashtable
+	if(mailbox_cache == NULL){
+		mailbox_cache = kmem_cache_create("mailbox_cache", sizeof(mailbox), 0, 0, NULL);
+		ht = create();
 	}
 
+	if(message_cache == NULL){
+		message_cache = kmem_cache_create("message_cache", MAX_MSG_SIZE, 0, 0, NULL);
+	}
+
+	/*
+	if(m == NULL){
+		return MAILBOX_INVALID;
+	}
+	*/
+
+	// &count = m->msgNum;
 	return 0;
 }	// asmlinkage long ManageMailbox(bool stop, int *count)
 
 mailbox *createMailbox(int key){
-	mailbox *newBox = (mailbox *)kmem_cache_alloc(cache, GFP_KERNEL);
+	mailbox *newBox = (mailbox *)kmem_cache_alloc(mailbox_cache, GFP_KERNEL);
+	ht->mailboxes[ht->boxNum] = (mailbox *)kmalloc(sizeof(mailbox *),GFP_KERNEL);
+	ht->size++;
 	newBox->key = key;
+	newBox->msgNum = 0;
+	newBox->stopped = FALSE;
 	newBox->next = NULL;
 	return newBox;
 }
 
-hashtable *create(void){
+int insertMsg(int dest, char *msg, int len, bool block){
+	mailbox *m = getBox(ht, dest);
+
+	if(m == NULL){
+		return MAILBOX_INVALID;
+	}
+
+	if(m->msgNum < MAX_MAILBOX_SIZE){
+		m->messages[m->msgNum] = (char *)kmem_cache_alloc(message_cache, GFP_KERNEL);
+	}
+
+	if(m->msgNum >= MAX_MAILBOX_SIZE && block == FALSE){
+		return MAILBOX_FULL;
+	}
+
+	// TODO: Add wait
+	if(m->msgNum >= MAX_MAILBOX_SIZE && block == TRUE){
+		//
+	}
+
+	if(len > MAX_MSG_SIZE){
+		return MSG_LENGTH_ERROR;
+	}
+
+	m->messages[m->msgNum] = msg;
+	m->msgNum++;
+	return 0;
+}
+
+int removeMsg(int *sender, void *msg, int *len, bool block){
 	int i;
+	mailbox *m = getBox(ht, *sender);
+
+	if(m == NULL){
+		return MAILBOX_INVALID;
+	}
+
+	if(m->msgNum != 0){
+		printk(KERN_INFO "%s", m->messages[0]);
+		msg = (void *)m->messages[0];
+		len = (int *)sizeof(m->messages[0]);
+	}
+
+	// TODO: Add wait
+	if(m->msgNum == 0 && m->stopped == FALSE && block){
+		//
+	}
+
+	if(m->msgNum == 0 && m->stopped == FALSE && !block){
+		return MAILBOX_EMPTY;
+	}
+
+	if(m->stopped){
+		if(m->msgNum == 0){
+			return MAILBOX_STOPPED;
+		}
+
+		printk(KERN_INFO "%s", m->messages[0]);
+		msg = (void *)m->messages[0];
+		len = (int *)sizeof(m->messages[0]);
+	}
+
+	for(i = 0; i < m->msgNum; i++){
+		m->messages[i] = m->messages[i+1];
+	}
+
+	m->msgNum--;
+	return 0;
+}
+
+hashtable *create(void){
 	hashtable *newHash;
 
+	// Allocate space for hashtable
 	if((newHash = (hashtable *)kmalloc(sizeof(hashtable), GFP_KERNEL)) == NULL)
 		return NULL;
 
-	if((newHash->mailboxes = (mailbox **)kmalloc(16*sizeof(mailbox *), GFP_KERNEL)) == NULL)
+	// Allocate space for pointer of mailboxes
+	if((newHash->mailboxes = (mailbox **)kmalloc(sizeof(mailbox *), GFP_KERNEL)) == NULL)
 		return NULL;
 
-	for(i = 0; i < 16; i++){
-		newHash->mailboxes[i] = NULL;
-	}
-
-	newHash->size = 16;
+	newHash->mailboxes[0] = NULL;
+	newHash->size = 1; // Initial is 16 mailboxes
+	newHash->boxNum = 0;
 	return newHash;
 }
 
 int insert(hashtable *h, int key){
-	int i;
 	mailbox *next, *last;
 	next = h->mailboxes[0];
+	last = NULL;
 
+	// Traverse linked list to end
 	while(next != NULL){
 		last = next;
 		next = next->next;
@@ -86,13 +214,11 @@ int insert(hashtable *h, int key){
 	next = createMailbox(key);
 	last->next = next;
 
+	// At max size, make more space for pointers
 	if(h->size <=  h->boxNum){
-		for(i = h->boxNum; i < h->size + 16; i++){
-			h->mailboxes[i] = (mailbox *)kmalloc(sizeof(mailbox *), GFP_KERNEL);
-			h->mailboxes[i] = NULL;
-		}
-
-		h->size += 16;
+		h->mailboxes[h->boxNum] = (mailbox *)kmalloc(sizeof(mailbox *), GFP_KERNEL);
+		h->mailboxes[h->boxNum] = NULL;
+		h->size++;
 	}
 
 	h->mailboxes[h->boxNum] = next;
@@ -103,6 +229,7 @@ int insert(hashtable *h, int key){
 mailbox *getBox(hashtable *h, int key){
 	mailbox *next = h->mailboxes[0];
 
+	// Return mailbox * if found. Else return NULL
 	while(next != NULL){
 		if(next->key == key){
 			return next;
@@ -130,7 +257,7 @@ int remove(hashtable *h, int key){
 				h->mailboxes[j] = h->mailboxes[j+1];
 			}
 
-			kmem_cache_free(cache, &next);
+			kmem_cache_free(mailbox_cache, &next);
 			h->boxNum--;
 			return 0;
 		}
@@ -143,8 +270,6 @@ int remove(hashtable *h, int key){
 	return -1;
 }
 
-// Used to find the system call table
-// #DO NOT MODIFY
 static unsigned long **find_sys_call_table(void) {
 	unsigned long int offset = PAGE_OFFSET;
 	unsigned long **sct;
@@ -163,8 +288,6 @@ static unsigned long **find_sys_call_table(void) {
 	return NULL;
 }	// static unsigned long **find_sys_call_table(void)
 
-// Disables the protection for read-only memory
-// # DO NOT MODIFY
 static void disable_page_protection(void) {
 	/*
 	Control Register 0 (cr0) governs how the CPU operates.
@@ -184,8 +307,6 @@ static void disable_page_protection(void) {
 	write_cr0 (read_cr0 () & (~ 0x10000));
 }	//static void disable_page_protection(void)
 
-// Enables the protection for read-only memory
-// # DO NOT MODIFY
 static void enable_page_protection(void) {
 	/*
 	See the above description for cr0. Here, we use an OR to set the
@@ -195,21 +316,6 @@ static void enable_page_protection(void) {
 	write_cr0 (read_cr0 () | 0x10000);
 }	// static void enable_page_protection(void)
 
-
-// Interceptor Start
-//
-// Finds the system call table
-//
-// Saves the address of the existing open and/or close in a pointer
-//
-// Disables the paging protections
-//
-// Replaces the call's entry in the page table
-// with a pointer to the new function
-//
-// Re-enables the page protections
-//
-// Writes a note to the system log
 static int __init interceptor_start(void) {
 	/* Find the system call table */
 	if(!(sys_call_table = find_sys_call_table())) {
@@ -232,12 +338,6 @@ static int __init interceptor_start(void) {
 	return 0;
 }	// static int __init interceptor_start(void)
 
-// Interceptor End
-//
-// Reverses changes of interceptor start function
-// 
-// Uses saved pointer value for original system call
-// and puts it back in the syscall table in the right array location
 static void __exit interceptor_end(void) {
 	/* If we don't know what the syscall table is, don't bother. */
 	if(!sys_call_table)
