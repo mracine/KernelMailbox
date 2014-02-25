@@ -13,6 +13,7 @@
 #define BLOCK   1
 #define MAX_MSG_SIZE 128
 #define MAX_MAILBOX_SIZE 64
+#define MAX_MAILBOXES 32
 #define FALSE 0
 #define TRUE 1
 
@@ -32,11 +33,16 @@ asmlinkage long ManageMailbox(bool stop, int *count);
  * Hashtable implementation
  *
  * */
+typedef struct message_s {
+	char *msg;
+	int len;
+} message;
+ 
 typedef struct mailbox_s {
 	int key;
 	int msgNum;
 	bool stopped;
-	char **messages;
+	message **messages;
 	struct mailbox_s *next;
 } mailbox; // struct mailbox
 
@@ -45,6 +51,8 @@ typedef struct hashtable_s {
 	int boxNum;
 	mailbox **mailboxes;
 } hashtable; // struct hashtable
+
+
 
 hashtable *create(void); // Initialize table to 16 mailboxes
 int insert(hashtable *h, int key);

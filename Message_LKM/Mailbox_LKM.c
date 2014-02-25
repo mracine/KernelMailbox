@@ -18,7 +18,6 @@
 #include <linux/string.h>
 
 unsigned long **sys_call_table;
-struct kmem_cache *ht_cache = NULL;
 struct kmem_cache *mailbox_cache = NULL;
 struct kmem_cache *message_cache = NULL;
 hashtable *ht = NULL;
@@ -30,11 +29,6 @@ asmlinkage long (*ref_cs3013_syscall3)(void);
 asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block) {
 	int err;
 
-	// Hashtable cache
-	if(ht_cache == NULL){
-		ht_cache = kmem_cache_create("ht_cache", sizeof(mailbox *), 0, 0, NULL);
-	}
-
 	// Mailbox cache
 	if(mailbox_cache == NULL){
 		mailbox_cache = kmem_cache_create("mailbox_cache", sizeof(mailbox), 0, 0, NULL);
@@ -43,13 +37,13 @@ asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block) {
 
 	// Message cache
 	if(message_cache == NULL){
-		message_cache = kmem_cache_create("message_cache", MAX_MSG_SIZE, 0, 0, NULL);
+		message_cache = kmem_cache_create("message_cache", sizeof(message)*64, 0, 0, NULL);
 	}
 
 	err = insertMsg(dest, (char *)msg, len, block);
 
 	if(err != 0){
-		printf(KERN_INFO "%d", err);
+		printk(KERN_INFO "%d", err);
 		return err;
 	}
 
@@ -60,11 +54,6 @@ asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block) {
 	int err;
 	void *newMsg;
 
-	// Hashtable cache
-	if(ht_cache == NULL){
-		ht_cache = kmem_cache_create("ht_cache", sizeof(mailbox *), 0, 0, NULL);
-	}
-
 	// Mailbox cache
 	if(mailbox_cache == NULL){
 		mailbox_cache = kmem_cache_create("mailbox_cache", sizeof(mailbox), 0, 0, NULL);
@@ -73,13 +62,13 @@ asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block) {
 
 	// Message cache
 	if(message_cache == NULL){
-		message_cache = kmem_cache_create("message_cache", MAX_MSG_SIZE, 0, 0, NULL);
+		message_cache = kmem_cache_create("message_cache", sizeof(message)*64, 0, 0, NULL);
 	}
 
 	err = removeMsg(sender, newMsg, len, block);
 
 	if(err != 0){
-		printf(KERN_INFO "%d", err);
+		printk(KERN_INFO "%d", err);
 		return err;
 	}
 
@@ -93,11 +82,6 @@ asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block) {
 asmlinkage long ManageMailbox(bool stop, int *count){
 	// mailbox *m = getBox(ht, dest);
 
-	// Hashtable cache
-	if(ht_cache == NULL){
-		ht_cache = kmem_cache_create("ht_cache", sizeof(mailbox *), 0, 0, NULL);
-	}
-
 	// Mailbox cache
 	if(mailbox_cache == NULL){
 		mailbox_cache = kmem_cache_create("mailbox_cache", sizeof(mailbox), 0, 0, NULL);
@@ -106,7 +90,7 @@ asmlinkage long ManageMailbox(bool stop, int *count){
 
 	// Message cache
 	if(message_cache == NULL){
-		message_cache = kmem_cache_create("message_cache", MAX_MSG_SIZE, 0, 0, NULL);
+		message_cache = kmem_cache_create("message_cache", sizeof(message)*64, 0, 0, NULL);
 	}
 
 	/*
@@ -121,18 +105,22 @@ asmlinkage long ManageMailbox(bool stop, int *count){
 
 hashtable *create(void){
 	hashtable *newHash;
+	int i;
 
 	// Allocate space for hashtable
 	if((newHash = (hashtable *)kmalloc(sizeof(hashtable), GFP_KERNEL)) == NULL)
 		return NULL;
 
 	// Allocate space for pointer of mailboxes
-	if((newHash->mailboxes[0] = (mailbox *)kmem_cache_alloc(ht_cache, GFP_KERNEL)) == NULL)
+	if((newHash->mailboxes = (mailbox **)kmalloc(sizeof(mailbox *)*32, GFP_KERNEL)) == NULL)
 		return NULL;
 
 	// Initialize hashtable
-	newHash->mailboxes[0] = NULL;
-	newHash->size = 1;
+	for (i=0; i<32; i++){
+		newHash->mailboxes[i] = NULL;
+	}
+
+	newHash->size = 32;
 	newHash->boxNum = 0;
 	return newHash;
 } // hashtable *create(void)
@@ -146,12 +134,17 @@ mailbox *createMailbox(int key){
 	newBox->stopped = false;
 	newBox->next = NULL;
 
+	// Set the last entry in the mailbox pointer list in the hash to the new box
+	ht->mailboxes[ht->boxNum] = newBox;
+
 	// Increment hashtable allocated size
 	ht->size++;
+	ht->boxNum++;
 	return newBox;
 } // mailbox *createMailbox(int key)
 
 int insertMsg(int dest, char *msg, int len, bool block){
+	message *newMsg;
 	mailbox *m = getBox(ht, dest);
 
 	// Mailbox does not exist in hashtable
@@ -159,10 +152,20 @@ int insertMsg(int dest, char *msg, int len, bool block){
 		m = createMailbox(dest);
 	}
 
-	// 
-	if(m->msgNum < MAX_MAILBOX_SIZE){
-		m->messages[m->msgNum] = (char *)kmem_cache_alloc(message_cache, GFP_KERNEL);
+	// Check message length
+	if(len > MAX_MSG_SIZE){
+		return MSG_LENGTH_ERROR;
 	}
+
+	// if it has room put in the list of messages
+	//if(m->msgNum < MAX_MAILBOX_SIZE){
+	//	m->messages[m->msgNum] = (message *)kmem_cache_alloc(message_cache, GFP_KERNEL);
+	//}
+
+	// Initialize the new message struct to insert
+	newMsg->msg = msg;
+	newMsg->len = len;
+
 
 	if(m->msgNum >= MAX_MAILBOX_SIZE && block == false){
 		return MAILBOX_FULL;
@@ -170,30 +173,34 @@ int insertMsg(int dest, char *msg, int len, bool block){
 
 	// TODO: Add wait
 	if(m->msgNum >= MAX_MAILBOX_SIZE && block == true){
-		//
+		// wait until the mailbox has room
 	}
 
-	if(len > MAX_MSG_SIZE){
-		return MSG_LENGTH_ERROR;
-	}
-
-	m->messages[m->msgNum] = msg;
+	m->messages[m->msgNum] = (message *)newMsg;
 	m->msgNum++;
+
+	printk(KERN_INFO "Msgnum = %d\n", m->msgNum);
+	printk(KERN_INFO "newMsg= %s\n", newMsg->msg);
+	printk(KERN_INFO "Mailbox PID = %d\n", m->key);
+
 	return 0;
 } // int insertMsg(int dest, char *msg, int len, bool block)
 
 int removeMsg(int *sender, void *msg, int *len, bool block){
 	int i;
 	mailbox *m = getBox(ht, *sender);
+	message *newMsg = NULL;
 
 	if(m == NULL){
 		m = createMailbox(*sender);
 	}
 
+	newMsg = m->messages[0];
+
 	if(m->msgNum != 0){
-		printk(KERN_INFO "%s", m->messages[0]);
-		msg = (void *)m->messages[0];
-		len = (int *)sizeof(m->messages[0]);
+		printk(KERN_INFO "%s", newMsg->msg);
+		msg = newMsg->msg;
+		len = (int *)newMsg->len;
 	}
 
 	// TODO: Add wait
@@ -210,11 +217,12 @@ int removeMsg(int *sender, void *msg, int *len, bool block){
 			return MAILBOX_STOPPED;
 		}
 
-		printk(KERN_INFO "%s", m->messages[0]);
-		msg = (void *)m->messages[0];
-		len = (int *)sizeof(m->messages[0]);
+		printk(KERN_INFO "%s", newMsg->msg);
+		msg = newMsg->msg;
+		len = (int *)newMsg->len;
 	}
 
+	// Update the array of messages inside the mailbox 
 	for(i = 0; i < m->msgNum; i++){
 		m->messages[i] = m->messages[i+1];
 	}
@@ -239,13 +247,14 @@ int insert(hashtable *h, int key){
 	last->next = next;
 
 	// At max size, make more space for pointers
-	if(h->size <=  h->boxNum){
-		h->mailboxes[h->boxNum] = (mailbox *)kmem_cache_alloc(ht_cache, GFP_KERNEL);
-		h->size++;
+	if(h->boxNum ==  32){
+		return -1;
+	}
+	else{
+		h->mailboxes[h->boxNum] = next;
+		h->boxNum++;
 	}
 
-	h->mailboxes[h->boxNum] = next;
-	h->boxNum++;
 	return 0;
 } // int insert(hashtable *h, int key)
 
@@ -287,7 +296,6 @@ int remove(hashtable *h, int key){
 				kmem_cache_free(message_cache, &next->messages[j]);
 			}
 
-			kmem_cache_free(ht_cache, next); // Free pointer in hashtable
 			kmem_cache_free(mailbox_cache, &next); // Free mailbox in cache
 			h->boxNum--;
 			return 0;
