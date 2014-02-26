@@ -21,6 +21,7 @@ unsigned long **sys_call_table;
 struct kmem_cache *mailbox_cache = NULL;
 struct kmem_cache *message_cache = NULL;
 hashtable *ht = NULL;
+void *msg2print;
 
 asmlinkage long (*ref_cs3013_syscall1)(void);
 asmlinkage long (*ref_cs3013_syscall2)(void);
@@ -28,19 +29,20 @@ asmlinkage long (*ref_cs3013_syscall3)(void);
 
 asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block) {
 	int err;
+	int destination = (int) dest;
 
 	// Mailbox cache
 	if(mailbox_cache == NULL){
-		mailbox_cache = kmem_cache_create("mailbox_cache", sizeof(mailbox), 0, 0, NULL);
+		mailbox_cache = kmem_cache_create("mailbox_cache", sizeof(mailbox)+sizeof(message *)*64, 0, 0, NULL);
 		ht = create();
 	}
 
 	// Message cache
 	if(message_cache == NULL){
-		message_cache = kmem_cache_create("message_cache", sizeof(message)*64, 0, 0, NULL);
+		message_cache = kmem_cache_create("message_cache", sizeof(message), 0, 0, NULL);
 	}
 
-	err = insertMsg(dest, (char *)msg, len, block);
+	err = insertMsg(destination, (char *)msg, len, block);
 
 	if(err != 0){
 		printk(KERN_INFO "%d", err);
@@ -52,7 +54,7 @@ asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block) {
 
 asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block) {
 	int err;
-	void *newMsg;
+	int *sndr = (int *)sender;
 
 	// Mailbox cache
 	if(mailbox_cache == NULL){
@@ -65,14 +67,14 @@ asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block) {
 		message_cache = kmem_cache_create("message_cache", sizeof(message)*64, 0, 0, NULL);
 	}
 
-	err = removeMsg(sender, newMsg, len, block);
+	err = removeMsg(sndr, msg, len, block);
 
 	if(err != 0){
 		printk(KERN_INFO "%d", err);
 		return err;
 	}
 
-	if(copy_to_user(msg, &newMsg, (unsigned long)*len)){
+	if(copy_to_user(msg, &msg2print, (unsigned long) *len)){
 		return EFAULT;
 	}
 
@@ -126,31 +128,41 @@ hashtable *create(void){
 } // hashtable *create(void)
 
 mailbox *createMailbox(int key){
+	int i;
 	mailbox *newBox = (mailbox *)kmem_cache_alloc(mailbox_cache, GFP_KERNEL); // Allocate mailbox from cache
 	
 	// Init values
 	newBox->key = key;
+	newBox->ref_counter = 0;
 	newBox->msgNum = 0;
 	newBox->stopped = false;
 	newBox->next = NULL;
+	
+	for (i=0; i< 64; i++){
+		newBox->messages[i] = NULL;
+	}
+
+	// we need to check the size of the hashtable to see if there is room here for this new mailbox pointer
 
 	// Set the last entry in the mailbox pointer list in the hash to the new box
 	ht->mailboxes[ht->boxNum] = newBox;
 
 	// Increment hashtable allocated size
-	ht->size++;
+	//race condition here
 	ht->boxNum++;
 	return newBox;
 } // mailbox *createMailbox(int key)
 
 int insertMsg(int dest, char *msg, int len, bool block){
-	message *newMsg;
+	message *newMsg = NULL;
 	mailbox *m = getBox(ht, dest);
 
 	// Mailbox does not exist in hashtable
 	if(m == NULL){
 		m = createMailbox(dest);
 	}
+
+	printk(KERN_INFO "We now have the mailbox for pid %d.", m->key);
 
 	// Check message length
 	if(len > MAX_MSG_SIZE){
@@ -163,9 +175,11 @@ int insertMsg(int dest, char *msg, int len, bool block){
 	//}
 
 	// Initialize the new message struct to insert
+	newMsg = kmem_cache_alloc(message_cache, GFP_KERNEL);
 	newMsg->msg = msg;
 	newMsg->len = len;
 
+	printk(KERN_INFO "THE MESSAGE WILL NOW BE INSERTED INTO THE MAILBOX");
 
 	if(m->msgNum >= MAX_MAILBOX_SIZE && block == false){
 		return MAILBOX_FULL;
@@ -179,9 +193,11 @@ int insertMsg(int dest, char *msg, int len, bool block){
 	m->messages[m->msgNum] = (message *)newMsg;
 	m->msgNum++;
 
+	printk(KERN_INFO "********************************************************\n");
 	printk(KERN_INFO "Msgnum = %d\n", m->msgNum);
 	printk(KERN_INFO "newMsg= %s\n", newMsg->msg);
 	printk(KERN_INFO "Mailbox PID = %d\n", m->key);
+	printk(KERN_INFO "********************************************************\n");
 
 	return 0;
 } // int insertMsg(int dest, char *msg, int len, bool block)
@@ -191,14 +207,18 @@ int removeMsg(int *sender, void *msg, int *len, bool block){
 	mailbox *m = getBox(ht, *sender);
 	message *newMsg = NULL;
 
+	printk("mailbox PID = %d\n", m->key);
 	if(m == NULL){
 		m = createMailbox(*sender);
 	}
 
 	newMsg = m->messages[0];
-
+	printk(KERN_INFO "message = %s\n", newMsg->msg);
+	// If the mailbox is not empty then get the first one. 
 	if(m->msgNum != 0){
 		printk(KERN_INFO "%s", newMsg->msg);
+		msg2print = newMsg->msg;
+		printk(KERN_INFO "msg2print = %s\n", (char *) msg2print);
 		msg = newMsg->msg;
 		len = (int *)newMsg->len;
 	}
@@ -218,11 +238,13 @@ int removeMsg(int *sender, void *msg, int *len, bool block){
 		}
 
 		printk(KERN_INFO "%s", newMsg->msg);
+		msg2print = newMsg->msg;
 		msg = newMsg->msg;
 		len = (int *)newMsg->len;
 	}
 
 	// Update the array of messages inside the mailbox 
+	// Would a linked list of messages be easier here? instead of 
 	for(i = 0; i < m->msgNum; i++){
 		m->messages[i] = m->messages[i+1];
 	}

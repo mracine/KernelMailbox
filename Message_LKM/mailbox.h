@@ -41,8 +41,9 @@ typedef struct message_s {
 typedef struct mailbox_s {
 	int key;
 	int msgNum;
+	int ref_counter;
 	bool stopped;
-	message **messages;
+	message *messages[64];
 	struct mailbox_s *next;
 } mailbox; // struct mailbox
 
