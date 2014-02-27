@@ -16,6 +16,7 @@
 #include <linux/slab.h>
 #include <linux/mailbox.h>
 #include <linux/string.h>
+#include <linux/sched.h>
 
 unsigned long **sys_call_table;
 struct kmem_cache *mailbox_cache = NULL;
@@ -54,7 +55,7 @@ asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block) {
 
 asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block) {
 	int err;
-	int *sndr = (int *)sender;
+	printk(KERN_INFO "pid to rcv from = %d", current->pid);
 
 	// Mailbox cache
 	if(mailbox_cache == NULL){
@@ -67,7 +68,7 @@ asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block) {
 		message_cache = kmem_cache_create("message_cache", sizeof(message)*64, 0, 0, NULL);
 	}
 
-	err = removeMsg(sndr, msg, len, block);
+	err = removeMsg(sender, msg, len, block);
 
 	if(err != 0){
 		printk(KERN_INFO "%d", err);
@@ -195,7 +196,7 @@ int insertMsg(int dest, char *msg, int len, bool block){
 
 	printk(KERN_INFO "********************************************************\n");
 	printk(KERN_INFO "Msgnum = %d\n", m->msgNum);
-	printk(KERN_INFO "newMsg= %s\n", newMsg->msg);
+	printk(KERN_INFO "newMsg= %s\n", m->messages[m->msgNum-1]->msg);
 	printk(KERN_INFO "Mailbox PID = %d\n", m->key);
 	printk(KERN_INFO "********************************************************\n");
 
@@ -204,20 +205,32 @@ int insertMsg(int dest, char *msg, int len, bool block){
 
 int removeMsg(int *sender, void *msg, int *len, bool block){
 	int i;
-	mailbox *m = getBox(ht, *sender);
+	mailbox *m = getBox(ht, current->pid);
 	message *newMsg = NULL;
 
-	printk("mailbox PID = %d\n", m->key);
+	printk(KERN_INFO "***************************************************\n");
+	printk(KERN_INFO "WE ARE INSIDE REMOVEMSG\n");
+	printk(KERN_INFO "The pid of the sender should be %d\n", current->pid);
+	//printk(KERN_INFO "The key of the mailbox is %d\n", m->key);
+
 	if(m == NULL){
-		m = createMailbox(*sender);
+		m = createMailbox(current->pid);
 	}
+	printk("actual mailbox PID = %d\n", m->key);
 
 	newMsg = m->messages[0];
-	printk(KERN_INFO "message = %s\n", newMsg->msg);
+	if (newMsg == NULL){
+		printk(KERN_INFO "ASDFUJBSJOADLFB");
+		return -1;
+
+	} else {
+		printk(KERN_INFO "message = %s\n", newMsg->msg);
+	}
+
 	// If the mailbox is not empty then get the first one. 
 	if(m->msgNum != 0){
 		printk(KERN_INFO "%s", newMsg->msg);
-		msg2print = newMsg->msg;
+		msg2print = m->messages[0]->msg;
 		printk(KERN_INFO "msg2print = %s\n", (char *) msg2print);
 		msg = newMsg->msg;
 		len = (int *)newMsg->len;

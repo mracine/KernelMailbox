@@ -37,7 +37,7 @@ typedef struct message_s {
 	char *msg;
 	int len;
 } message;
- 
+
 typedef struct mailbox_s {
 	int key;
 	int msgNum;
