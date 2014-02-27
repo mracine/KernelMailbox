@@ -22,7 +22,6 @@ unsigned long **sys_call_table;
 struct kmem_cache *mailbox_cache = NULL;
 struct kmem_cache *message_cache = NULL;
 hashtable *ht = NULL;
-void *msg2print;
 
 asmlinkage long (*ref_cs3013_syscall1)(void);
 asmlinkage long (*ref_cs3013_syscall2)(void);
@@ -55,7 +54,7 @@ asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block) {
 
 asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block) {
 	int err;
-	printk(KERN_INFO "pid to rcv from = %d", current->pid);
+	printk(KERN_INFO "RcvMsg: Pid to receive from = %d", current->pid);
 
 	// Mailbox cache
 	if(mailbox_cache == NULL){
@@ -73,10 +72,6 @@ asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block) {
 	if(err != 0){
 		printk(KERN_INFO "%d", err);
 		return err;
-	}
-
-	if(copy_to_user(msg, &msg2print, (unsigned long) *len)){
-		return EFAULT;
 	}
 
 	return 0;
@@ -155,16 +150,24 @@ mailbox *createMailbox(int key){
 } // mailbox *createMailbox(int key)
 
 int insertMsg(int dest, char *msg, int len, bool block){
-	message *newMsg = NULL;
 	mailbox *m = getBox(ht, dest);
+	message *newMsg = NULL;
 
 	// Mailbox does not exist in hashtable
 	if(m == NULL){
-		printk(KERN_INFO "InsertMsg Mailbox doesnt exist\n");
+		printk(KERN_INFO "insertMsg: Mailbox doesnt exist, creating new\n");
 		m = createMailbox(dest);
 	}
 
-	printk(KERN_INFO "We now have the mailbox for pid %d.", m->key);
+
+	if(m->msgNum >= MAX_MAILBOX_SIZE && block == false){
+		return MAILBOX_FULL;
+	}
+
+	// TODO: Add wait
+	if(m->msgNum >= MAX_MAILBOX_SIZE && block == true){
+		// wait until the mailbox has room
+	}
 
 	// Check message length
 	if(len > MAX_MSG_SIZE){
@@ -181,26 +184,14 @@ int insertMsg(int dest, char *msg, int len, bool block){
 	newMsg->msg = msg;
 	newMsg->len = len;
 
-	printk(KERN_INFO "THE MESSAGE WILL NOW BE INSERTED INTO THE MAILBOX");
-
-	if(m->msgNum >= MAX_MAILBOX_SIZE && block == false){
-		return MAILBOX_FULL;
-	}
-
-	// TODO: Add wait
-	if(m->msgNum >= MAX_MAILBOX_SIZE && block == true){
-		// wait until the mailbox has room
-	}
-
-	printk(KERN_INFO "MsgNum = %d\n", m->msgNum);
 	m->messages[m->msgNum] = newMsg;
 	m->msgNum++;
 
 	printk(KERN_INFO "********************************************************\n");
-	printk(KERN_INFO "Msgnum = %d\n", m->msgNum);
-	printk(KERN_INFO "newMsg= %s\n", m->messages[m->msgNum-1]->msg);
-	printk(KERN_INFO "Mailbox PID = %d\n", m->key);
-	printk(KERN_INFO "Msg length %d", m->messages[m->msgNum-1]->len);
+	printk(KERN_INFO "insertMsg: %d messages in this mailbox\n", m->msgNum);
+	printk(KERN_INFO "insertMsg: Mailbox PID = %d\n", m->key);
+	printk(KERN_INFO "insertMsg: New message = %s\n", m->messages[m->msgNum-1]->msg);
+	printk(KERN_INFO "insertMsg: Message length %d", m->messages[m->msgNum-1]->len);
 	printk(KERN_INFO "********************************************************\n");
 
 	return 0;
@@ -211,39 +202,34 @@ int removeMsg(int *sender, void *msg, int *len, bool block){
 	mailbox *m = getBox(ht, current->pid);
 	message *newMsg = NULL;
 
-	printk(KERN_INFO "***************************************************\n");
-	printk(KERN_INFO "WE ARE INSIDE REMOVEMSG\n");
-	printk(KERN_INFO "Current pid should be %d\n", current->pid);
-	//printk(KERN_INFO "The key of the mailbox is %d\n", m->key);
+	printk(KERN_INFO "********************************************************\n");
 
 	if(m == NULL){
-		printk(KERN_INFO "Mailbox doesnt exist, creating one\n");
+		printk(KERN_INFO "removeMsg: Mailbox doesnt exist, creating new\n");
 		m = createMailbox(current->pid);
 	}
 
-	printk("actual mailbox PID = %d\n", m->key);
+	printk("removeMsg: Mailbox PID = %d\n", m->key);
+
 	newMsg = m->messages[0];
 
 	if (newMsg == NULL){
-		printk(KERN_INFO "ASDFUJBSJOADLFB\n");
+		printk(KERN_INFO "removeMsg: Message is NULL. Returning...\n");
 		return -1;
 	}
 
 	else {
-		printk(KERN_INFO "message = %s\n", newMsg->msg);
-		printk(KERN_INFO "newMsg= %s\n", m->messages[0]->msg);
-		printk(KERN_INFO "%c\n", newMsg->msg[0]);
-		printk(KERN_INFO "message len = %d\n", newMsg->len);
+		printk(KERN_INFO "removeMsg: Message = %s\n", newMsg->msg);
+		printk(KERN_INFO "removeMsg: First character is %c\n", newMsg->msg[0]);
+		printk(KERN_INFO "removeMsg: Message length = %d\n", newMsg->len);
 
-		//if(copy_to_user(msg, "I am your father", sizeof("I am your father"))){
-		//	return EFAULT;
-		//}
+		if(copy_to_user(msg, newMsg, sizeof(newMsg))){
+			return EFAULT;
+		}
 	}
 
 	// If the mailbox is not empty then get the first one. 
 	if(m->msgNum != 0){
-		msg2print = m->messages[0]->msg;
-		printk(KERN_INFO "msg2print = %s\n", (char *) msg2print);
 		msg = newMsg->msg;
 		len = (int *)newMsg->len;
 	}
@@ -263,7 +249,6 @@ int removeMsg(int *sender, void *msg, int *len, bool block){
 		}
 
 		printk(KERN_INFO "%s\n", newMsg->msg);
-		msg2print = newMsg->msg;
 		msg = newMsg->msg;
 		len = (int *)newMsg->len;
 	}
@@ -325,7 +310,7 @@ mailbox *getBox(hashtable *h, int key){
 		}
 	}
 
-	printk("Returned null mailbox pointer\n");
+	printk("getBox: Returned null mailbox pointer\n");
 	return NULL;
 } // mailbox *getBox(hashtable *h, int key)
 
