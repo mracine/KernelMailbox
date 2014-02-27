@@ -60,7 +60,7 @@ int insert(hashtable *h, int key);
 mailbox *getBox(hashtable *h, int key);
 int remove(hashtable *h, int key);
 mailbox *createMailbox(int key);
-int insertMsg(int dest, char *msg, int len, bool block);
+int insertMsg(int dest, void *msg, int len, bool block);
 int removeMsg(int *sender, void *msg, int *len, bool block);
 
 extern struct kmem_cache *cache;

@@ -42,7 +42,7 @@ asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block) {
 		message_cache = kmem_cache_create("message_cache", sizeof(message), 0, 0, NULL);
 	}
 
-	err = insertMsg(destination, (char *)msg, len, block);
+	err = insertMsg(destination, msg, len, block);
 
 	if(err != 0){
 		printk(KERN_INFO "%d", err);
@@ -149,16 +149,16 @@ mailbox *createMailbox(int key){
 	return newBox;
 } // mailbox *createMailbox(int key)
 
-int insertMsg(int dest, char *msg, int len, bool block){
+int insertMsg(int dest, void *msg, int len, bool block){
 	mailbox *m = getBox(ht, dest);
 	message *newMsg = NULL;
+	message *newMsg2 = NULL;
 
 	// Mailbox does not exist in hashtable
 	if(m == NULL){
 		printk(KERN_INFO "insertMsg: Mailbox doesnt exist, creating new\n");
 		m = createMailbox(dest);
 	}
-
 
 	if(m->msgNum >= MAX_MAILBOX_SIZE && block == false){
 		return MAILBOX_FULL;
@@ -181,7 +181,7 @@ int insertMsg(int dest, char *msg, int len, bool block){
 
 	// Initialize the new message struct to insert
 	newMsg = kmem_cache_alloc(message_cache, GFP_KERNEL);
-	newMsg->msg = msg;
+	newMsg->msg = (char *)msg;
 	newMsg->len = len;
 
 	m->messages[m->msgNum] = newMsg;
@@ -191,8 +191,17 @@ int insertMsg(int dest, char *msg, int len, bool block){
 	printk(KERN_INFO "insertMsg: %d messages in this mailbox\n", m->msgNum);
 	printk(KERN_INFO "insertMsg: Mailbox PID = %d\n", m->key);
 	printk(KERN_INFO "insertMsg: New message = %s\n", m->messages[m->msgNum-1]->msg);
-	printk(KERN_INFO "insertMsg: Message length %d", m->messages[m->msgNum-1]->len);
+	printk(KERN_INFO "insertMsg: Message length = %d", m->messages[m->msgNum-1]->len);
 	printk(KERN_INFO "********************************************************\n");
+
+	newMsg2 = kmem_cache_alloc(message_cache, GFP_KERNEL);
+	newMsg2->msg = "Second message test";
+	newMsg2->len = 19;
+	m->messages[m->msgNum] = newMsg2;
+	m->msgNum++;
+
+	printk(KERN_INFO "removeMsg: Second message = %s\n", m->messages[m->msgNum - 1]->msg);
+	printk(KERN_INFO "removeMsg: Second message length = %d\n", m->messages[m->msgNum - 1]->len);
 
 	return 0;
 } // int insertMsg(int dest, char *msg, int len, bool block)
@@ -222,6 +231,9 @@ int removeMsg(int *sender, void *msg, int *len, bool block){
 		printk(KERN_INFO "removeMsg: Message = %s\n", newMsg->msg);
 		printk(KERN_INFO "removeMsg: First character is %c\n", newMsg->msg[0]);
 		printk(KERN_INFO "removeMsg: Message length = %d\n", newMsg->len);
+
+		printk(KERN_INFO "removeMsg: Second message = %s\n", m->messages[1]->msg);
+		printk(KERN_INFO "removeMsg: Second message length = %d\n", m->messages[1]->len);
 
 		if(copy_to_user(msg, newMsg, sizeof(newMsg))){
 			return EFAULT;
