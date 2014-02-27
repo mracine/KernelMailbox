@@ -160,6 +160,7 @@ int insertMsg(int dest, char *msg, int len, bool block){
 
 	// Mailbox does not exist in hashtable
 	if(m == NULL){
+		printk(KERN_INFO "InsertMsg Mailbox doesnt exist\n");
 		m = createMailbox(dest);
 	}
 
@@ -191,13 +192,15 @@ int insertMsg(int dest, char *msg, int len, bool block){
 		// wait until the mailbox has room
 	}
 
-	m->messages[m->msgNum] = (message *)newMsg;
+	printk(KERN_INFO "MsgNum = %d\n", m->msgNum);
+	m->messages[m->msgNum] = newMsg;
 	m->msgNum++;
 
 	printk(KERN_INFO "********************************************************\n");
 	printk(KERN_INFO "Msgnum = %d\n", m->msgNum);
 	printk(KERN_INFO "newMsg= %s\n", m->messages[m->msgNum-1]->msg);
 	printk(KERN_INFO "Mailbox PID = %d\n", m->key);
+	printk(KERN_INFO "Msg length %d", m->messages[m->msgNum-1]->len);
 	printk(KERN_INFO "********************************************************\n");
 
 	return 0;
@@ -210,26 +213,35 @@ int removeMsg(int *sender, void *msg, int *len, bool block){
 
 	printk(KERN_INFO "***************************************************\n");
 	printk(KERN_INFO "WE ARE INSIDE REMOVEMSG\n");
-	printk(KERN_INFO "The pid of the sender should be %d\n", current->pid);
+	printk(KERN_INFO "Current pid should be %d\n", current->pid);
 	//printk(KERN_INFO "The key of the mailbox is %d\n", m->key);
 
 	if(m == NULL){
+		printk(KERN_INFO "Mailbox doesnt exist, creating one\n");
 		m = createMailbox(current->pid);
 	}
+
 	printk("actual mailbox PID = %d\n", m->key);
-
 	newMsg = m->messages[0];
-	if (newMsg == NULL){
-		printk(KERN_INFO "ASDFUJBSJOADLFB");
-		return -1;
 
-	} else {
+	if (newMsg == NULL){
+		printk(KERN_INFO "ASDFUJBSJOADLFB\n");
+		return -1;
+	}
+
+	else {
 		printk(KERN_INFO "message = %s\n", newMsg->msg);
+		printk(KERN_INFO "newMsg= %s\n", m->messages[0]->msg);
+		printk(KERN_INFO "%c\n", newMsg->msg[0]);
+		printk(KERN_INFO "message len = %d\n", newMsg->len);
+
+		//if(copy_to_user(msg, "I am your father", sizeof("I am your father"))){
+		//	return EFAULT;
+		//}
 	}
 
 	// If the mailbox is not empty then get the first one. 
 	if(m->msgNum != 0){
-		printk(KERN_INFO "%s", newMsg->msg);
 		msg2print = m->messages[0]->msg;
 		printk(KERN_INFO "msg2print = %s\n", (char *) msg2print);
 		msg = newMsg->msg;
@@ -250,7 +262,7 @@ int removeMsg(int *sender, void *msg, int *len, bool block){
 			return MAILBOX_STOPPED;
 		}
 
-		printk(KERN_INFO "%s", newMsg->msg);
+		printk(KERN_INFO "%s\n", newMsg->msg);
 		msg2print = newMsg->msg;
 		msg = newMsg->msg;
 		len = (int *)newMsg->len;
@@ -294,17 +306,26 @@ int insert(hashtable *h, int key){
 } // int insert(hashtable *h, int key)
 
 mailbox *getBox(hashtable *h, int key){
-	mailbox *next = h->mailboxes[0];
+	//mailbox *next = h->mailboxes[0];
 
 	// If found, return mailbox *. Else return NULL
-	while(next != NULL){
-		if(next->key == key){
-			return next;
-		}
+	//while(next != NULL){
+	//	if(next->key == key){
+	//		return next;
+	//	}
 
-		next = next->next;
+	//	next = next->next;
+	//}
+
+	int i;
+
+	for (i = 0; i < h->boxNum; i++){
+		if(h->mailboxes[i]->key == key){
+			return h->mailboxes[i];
+		}
 	}
 
+	printk("Returned null mailbox pointer\n");
 	return NULL;
 } // mailbox *getBox(hashtable *h, int key)
 
@@ -352,7 +373,7 @@ static unsigned long **find_sys_call_table(void) {
 		sct = (unsigned long **)offset;
 
 		if (sct[__NR_close] == (unsigned long *) sys_close) {
-			printk(KERN_INFO "Interceptor: Found syscall table at address: 0x%02lX", (unsigned long) sct);
+			printk(KERN_INFO "Interceptor: Found syscall table at address: 0x%02lX\n", (unsigned long) sct);
 			return sct;
 		}
 
