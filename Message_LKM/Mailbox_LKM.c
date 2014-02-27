@@ -150,9 +150,9 @@ mailbox *createMailbox(int key){
 } // mailbox *createMailbox(int key)
 
 int insertMsg(int dest, void *msg, int len, bool block){
+	int i;
 	mailbox *m = getBox(ht, dest);
 	message *newMsg = NULL;
-	message *newMsg2 = NULL;
 
 	// Mailbox does not exist in hashtable
 	if(m == NULL){
@@ -181,7 +181,8 @@ int insertMsg(int dest, void *msg, int len, bool block){
 
 	// Initialize the new message struct to insert
 	newMsg = kmem_cache_alloc(message_cache, GFP_KERNEL);
-	newMsg->msg = (char *)msg;
+
+	copy_from_user(newMsg->msg, msg, GFP_KERNEL);
 	newMsg->len = len;
 
 	m->messages[m->msgNum] = newMsg;
@@ -193,15 +194,6 @@ int insertMsg(int dest, void *msg, int len, bool block){
 	printk(KERN_INFO "insertMsg: New message = %s\n", m->messages[m->msgNum-1]->msg);
 	printk(KERN_INFO "insertMsg: Message length = %d", m->messages[m->msgNum-1]->len);
 	printk(KERN_INFO "********************************************************\n");
-
-	newMsg2 = kmem_cache_alloc(message_cache, GFP_KERNEL);
-	newMsg2->msg = "Second message test";
-	newMsg2->len = 19;
-	m->messages[m->msgNum] = newMsg2;
-	m->msgNum++;
-
-	printk(KERN_INFO "removeMsg: Second message = %s\n", m->messages[m->msgNum - 1]->msg);
-	printk(KERN_INFO "removeMsg: Second message length = %d\n", m->messages[m->msgNum - 1]->len);
 
 	return 0;
 } // int insertMsg(int dest, char *msg, int len, bool block)
@@ -232,10 +224,7 @@ int removeMsg(int *sender, void *msg, int *len, bool block){
 		printk(KERN_INFO "removeMsg: First character is %c\n", newMsg->msg[0]);
 		printk(KERN_INFO "removeMsg: Message length = %d\n", newMsg->len);
 
-		printk(KERN_INFO "removeMsg: Second message = %s\n", m->messages[1]->msg);
-		printk(KERN_INFO "removeMsg: Second message length = %d\n", m->messages[1]->len);
-
-		if(copy_to_user(msg, newMsg, sizeof(newMsg))){
+		if(copy_to_user(msg, newMsg, newMsg->len)){
 			return EFAULT;
 		}
 	}

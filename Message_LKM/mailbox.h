@@ -34,7 +34,7 @@ asmlinkage long ManageMailbox(bool stop, int *count);
  *
  * */
 typedef struct message_s {
-	unsigned char *msg;
+	char msg[MAX_MSG_SIZE];
 	int len;
 } message;
 
