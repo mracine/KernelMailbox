@@ -23,7 +23,6 @@
  * */
 asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block);
 asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block);
-
 /**
  * Functions for maintaining mailboxes
  * 
@@ -34,14 +33,15 @@ asmlinkage long ManageMailbox(bool stop, int *count);
  *
  * */
 typedef struct message_s {
-	char msg[MAX_MSG_SIZE];
 	int len;
+	pid_t sender;
+	char msg[MAX_MSG_SIZE];
 } message;
 
 typedef struct mailbox_s {
-	int key;
-	int msgNum;
-	int ref_counter;
+	int key; // PID
+	int msgNum; // Number of messages
+	int ref_counter; // Ref counter for when a mailbox is stopped
 	bool stopped;
 	message *messages[64];
 	struct mailbox_s *next;
@@ -53,15 +53,13 @@ typedef struct hashtable_s {
 	mailbox **mailboxes;
 } hashtable; // struct hashtable
 
-
-
 hashtable *create(void); // Initialize table to 16 mailboxes
 int insert(hashtable *h, int key);
 mailbox *getBox(hashtable *h, int key);
 int remove(hashtable *h, int key);
 mailbox *createMailbox(int key);
-int insertMsg(int dest, void *msg, int len, bool block);
-int removeMsg(int *sender, void *msg, int *len, bool block);
+int insertMsg(pid_t dest, void *msg, int len, bool block);
+int removeMsg(pid_t *sender, void *msg, int *len, bool block);
 
 extern struct kmem_cache *cache;
 extern hashtable *ht;

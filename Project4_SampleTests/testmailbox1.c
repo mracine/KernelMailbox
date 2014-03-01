@@ -7,6 +7,8 @@
 
 #include "mailbox.h"
 #include <stdio.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 int main() {
   int childPID = fork();
@@ -16,6 +18,7 @@ int main() {
     void *msg[128];
     int len;
     bool block = true;
+    sleep(1);
     RcvMsg(&sender,msg,&len,block);
     printf("Message received.\n");
     printf("Message: %s\n", (char *) msg);
@@ -24,9 +27,13 @@ int main() {
   else{
     char mesg[] = "I am your father";
     printf("Sending Message to child.\n");
+
     if (SendMsg(childPID, mesg, 17, false)){
       printf("Send failed\n");
     }
+
+    wait(&childPID);
   }
+
   return 0;
 }

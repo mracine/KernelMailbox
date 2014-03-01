@@ -33,7 +33,7 @@ asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block) {
 
 	// Mailbox cache
 	if(mailbox_cache == NULL){
-		mailbox_cache = kmem_cache_create("mailbox_cache", sizeof(mailbox)+sizeof(message *)*64, 0, 0, NULL);
+		mailbox_cache = kmem_cache_create("mailbox_cache", sizeof(mailbox) + sizeof(message *)*64, 0, 0, NULL);
 		ht = create();
 	}
 
@@ -45,7 +45,7 @@ asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block) {
 	err = insertMsg(destination, msg, len, block);
 
 	if(err != 0){
-		printk(KERN_INFO "%d", err);
+		printk(KERN_INFO "SendMsg: Error %d", err);
 		return err;
 	}
 
@@ -54,7 +54,7 @@ asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block) {
 
 asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block) {
 	int err;
-	printk(KERN_INFO "RcvMsg: Pid to receive from = %d", current->pid);
+	printk(KERN_INFO "RcvMsg: Receiving from PID %d", current->pid);
 
 	// Mailbox cache
 	if(mailbox_cache == NULL){
@@ -70,7 +70,7 @@ asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block) {
 	err = removeMsg(sender, msg, len, block);
 
 	if(err != 0){
-		printk(KERN_INFO "%d", err);
+		printk(KERN_INFO "RcvMsg: Error %d", err);
 		return err;
 	}
 
@@ -78,7 +78,7 @@ asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block) {
 }	// asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block)
 
 asmlinkage long ManageMailbox(bool stop, int *count){
-	// mailbox *m = getBox(ht, dest);
+	mailbox *m = getBox(ht, current->pid);
 
 	// Mailbox cache
 	if(mailbox_cache == NULL){
@@ -97,13 +97,14 @@ asmlinkage long ManageMailbox(bool stop, int *count){
 	}
 	*/
 
-	// &count = m->msgNum;
+	copy_to_user(count, &m->msgNum, sizeof(int));
+	m->stopped = stop;
 	return 0;
 }	// asmlinkage long ManageMailbox(bool stop, int *count)
 
 hashtable *create(void){
-	hashtable *newHash;
 	int i;
+	hashtable *newHash;
 
 	// Allocate space for hashtable
 	if((newHash = (hashtable *)kmalloc(sizeof(hashtable), GFP_KERNEL)) == NULL)
@@ -114,12 +115,12 @@ hashtable *create(void){
 		return NULL;
 
 	// Initialize hashtable
-	for (i=0; i<32; i++){
+	for(i = 0; i < 32; i++){
 		newHash->mailboxes[i] = NULL;
 	}
 
-	newHash->size = 32;
-	newHash->boxNum = 0;
+	newHash->size = 32; // Allocate size to 32 mailbox pointers
+	newHash->boxNum = 0; // Initialize number of mailboxes
 	return newHash;
 } // hashtable *create(void)
 
@@ -134,23 +135,23 @@ mailbox *createMailbox(int key){
 	newBox->stopped = false;
 	newBox->next = NULL;
 	
-	for (i=0; i< 64; i++){
+	// Initialize messages to NULL
+	for(i = 0; i < MAX_MAILBOX_SIZE; i++){
 		newBox->messages[i] = NULL;
 	}
 
-	// we need to check the size of the hashtable to see if there is room here for this new mailbox pointer
+	// We need to check the size of the hashtable to see if there is room here for this new mailbox pointer
 
 	// Set the last entry in the mailbox pointer list in the hash to the new box
 	ht->mailboxes[ht->boxNum] = newBox;
 
 	// Increment hashtable allocated size
-	//race condition here
+	// Race condition here
 	ht->boxNum++;
 	return newBox;
 } // mailbox *createMailbox(int key)
 
-int insertMsg(int dest, void *msg, int len, bool block){
-	int i;
+int insertMsg(pid_t dest, void *msg, int len, bool block){
 	mailbox *m = getBox(ht, dest);
 	message *newMsg = NULL;
 
@@ -174,7 +175,7 @@ int insertMsg(int dest, void *msg, int len, bool block){
 		return MSG_LENGTH_ERROR;
 	}
 
-	// if it has room put in the list of messages
+	// If it has room put in the list of messages
 	//if(m->msgNum < MAX_MAILBOX_SIZE){
 	//	m->messages[m->msgNum] = (message *)kmem_cache_alloc(message_cache, GFP_KERNEL);
 	//}
@@ -182,8 +183,9 @@ int insertMsg(int dest, void *msg, int len, bool block){
 	// Initialize the new message struct to insert
 	newMsg = kmem_cache_alloc(message_cache, GFP_KERNEL);
 
-	copy_from_user(newMsg->msg, msg, GFP_KERNEL);
 	newMsg->len = len;
+	newMsg->sender = current->pid;
+	copy_from_user(newMsg->msg, msg, len);
 
 	m->messages[m->msgNum] = newMsg;
 	m->msgNum++;
@@ -198,7 +200,7 @@ int insertMsg(int dest, void *msg, int len, bool block){
 	return 0;
 } // int insertMsg(int dest, char *msg, int len, bool block)
 
-int removeMsg(int *sender, void *msg, int *len, bool block){
+int removeMsg(pid_t *sender, void *msg, int *len, bool block){
 	int i;
 	mailbox *m = getBox(ht, current->pid);
 	message *newMsg = NULL;
@@ -212,8 +214,8 @@ int removeMsg(int *sender, void *msg, int *len, bool block){
 
 	printk("removeMsg: Mailbox PID = %d\n", m->key);
 
+	// Get the first message in the mailbox
 	newMsg = m->messages[0];
-
 	if (newMsg == NULL){
 		printk(KERN_INFO "removeMsg: Message is NULL. Returning...\n");
 		return -1;
@@ -224,7 +226,16 @@ int removeMsg(int *sender, void *msg, int *len, bool block){
 		printk(KERN_INFO "removeMsg: First character is %c\n", newMsg->msg[0]);
 		printk(KERN_INFO "removeMsg: Message length = %d\n", newMsg->len);
 
-		if(copy_to_user(msg, newMsg, newMsg->len)){
+		// Copy the string back to the receiving mailbox
+		if(copy_to_user(msg, newMsg->msg, newMsg->len)){
+			return EFAULT;
+		}
+
+		if(copy_to_user(sender, &newMsg->sender, sizeof(pid_t))){
+			return EFAULT;
+		}
+
+		if(copy_to_user(len, &newMsg->len, sizeof(int))){
 			return EFAULT;
 		}
 	}
@@ -249,15 +260,20 @@ int removeMsg(int *sender, void *msg, int *len, bool block){
 			return MAILBOX_STOPPED;
 		}
 
-		printk(KERN_INFO "%s\n", newMsg->msg);
+		printk(KERN_INFO "removeMsg: Message = %s\n", newMsg->msg);
 		msg = newMsg->msg;
 		len = (int *)newMsg->len;
 	}
 
-	// Update the array of messages inside the mailbox 
-	// Would a linked list of messages be easier here? instead of 
+	// Update the array of messages inside the mailbox
 	for(i = 0; i < m->msgNum; i++){
-		m->messages[i] = m->messages[i+1];
+		if(i == m->msgNum - 1){
+			m->messages[i] = NULL;
+		}
+
+		else{
+			m->messages[i] = m->messages[i + 1];
+		}
 	}
 
 	m->msgNum--;
@@ -280,9 +296,10 @@ int insert(hashtable *h, int key){
 	last->next = next;
 
 	// At max size, make more space for pointers
-	if(h->boxNum ==  32){
+	if(h->boxNum == 32){
 		return -1;
 	}
+
 	else{
 		h->mailboxes[h->boxNum] = next;
 		h->boxNum++;
