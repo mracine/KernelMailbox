@@ -24,6 +24,7 @@ unsigned long **sys_call_table;
 struct kmem_cache *mailbox_cache = NULL;
 struct kmem_cache *message_cache = NULL;
 hashtable *ht = NULL;
+static spinlock_t main_lock;
 
 asmlinkage long (*ref_cs3013_syscall1)(void);
 asmlinkage long (*ref_cs3013_syscall2)(void);
@@ -34,6 +35,7 @@ asmlinkage long (*ref_cs3013_syscall3)(void);
 asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block) {
 	int err;
 	int destination = (int) dest;
+	spin_lock_init(&main_lock);
 
 	// Mailbox cache
 	if(mailbox_cache == NULL){
@@ -50,7 +52,7 @@ asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block) {
 
 	// Error in sending the message
 	if(err != 0){
-		printk(KERN_INFO "SendMsg: Error inserting message, error code %d", err);
+		printk(KERN_INFO "SendMsg: Error inserting message, error code %d\n", err);
 		return err;
 	}
 
@@ -60,6 +62,7 @@ asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block) {
 asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block) {
 	int err;
 	printk(KERN_INFO "RcvMsg: Receiving from PID %d", current->pid);
+	spin_lock_init(&main_lock);
 
 	// Mailbox cache
 	if(mailbox_cache == NULL){
@@ -76,7 +79,7 @@ asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block) {
 
 	// Error in removing the message
 	if(err != 0){
-		printk(KERN_INFO "RcvMsg: Error removing message, error code %d", err);
+		printk(KERN_INFO "RcvMsg: Error removing message, error code %d\n", err);
 		return err;
 	}
 
@@ -85,6 +88,7 @@ asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block) {
 
 asmlinkage long ManageMailbox(bool stop, int *count){
 	mailbox *m = getBox(ht, current->pid);
+	spin_lock_init(&main_lock);
 
 	// Mailbox cache
 	if(mailbox_cache == NULL){
@@ -127,13 +131,18 @@ hashtable *create(void){
 	int i;
 	hashtable *newHash;
 
+	spin_lock(&main_lock);
 	// Allocate space for hashtable
-	if((newHash = (hashtable *)kmalloc(sizeof(hashtable), GFP_KERNEL)) == NULL)
+	if((newHash = (hashtable *)kmalloc(sizeof(hashtable), GFP_KERNEL)) == NULL){
+		spin_unlock(&main_lock);
 		return NULL;
+	}
 
 	// Allocate space for pointer of mailboxes
-	if((newHash->mailboxes = (mailbox **)kmalloc(sizeof(mailbox *)*64, GFP_KERNEL)) == NULL)
+	if((newHash->mailboxes = (mailbox **)kmalloc(sizeof(mailbox *)*64, GFP_KERNEL)) == NULL){
+		spin_unlock(&main_lock);
 		return NULL;
+	}
 
 	// Initialize hashtable
 	for(i = 0; i < 64; i++){
@@ -142,6 +151,7 @@ hashtable *create(void){
 
 	newHash->size = 64; // Allocate size to 32 mailbox pointers
 	newHash->boxNum = 0; // Initialize number of mailboxes
+	spin_unlock(&main_lock);
 	return newHash;
 } // hashtable *create(void)
 
@@ -149,6 +159,8 @@ mailbox *createMailbox(int key){
 	int i;
 	mailbox *newBox = (mailbox *)kmem_cache_alloc(mailbox_cache, GFP_KERNEL); // Allocate mailbox from cache
 	
+	spin_lock(&main_lock);
+
 	// Init values
 	newBox->key = key;
 	newBox->ref_counter = 0;
@@ -176,6 +188,7 @@ mailbox *createMailbox(int key){
 	// Increment hashtable allocated size
 	// Race condition here
 	ht->boxNum++;
+	spin_unlock(&main_lock);
 	return newBox;
 } // mailbox *createMailbox(int key)
 
@@ -191,7 +204,10 @@ int insertMsg(pid_t dest, void *msg, int len, bool block){
 		m = createMailbox(dest);
 	}
 
+	spin_lock(&m->lock);
+
 	if(m->msgNum >= MAX_MAILBOX_SIZE && block == false){
+		spin_unlock(&m->lock);
 		return MAILBOX_FULL;
 	}
 
@@ -205,6 +221,7 @@ int insertMsg(pid_t dest, void *msg, int len, bool block){
 
 	// Check message length
 	if(len > MAX_MSG_SIZE){
+		spin_unlock(&m->lock);
 		return MSG_LENGTH_ERROR;
 	}
 
@@ -232,6 +249,7 @@ int insertMsg(pid_t dest, void *msg, int len, bool block){
 		wake_up(&m->read_queue);
 	}
 
+	spin_unlock(&m->lock);
 	return 0;
 } // int insertMsg(int dest, char *msg, int len, bool block)
 
@@ -247,33 +265,15 @@ int removeMsg(pid_t *sender, void *msg, int *len, bool block){
 		m = createMailbox(current->pid);
 	}
 
+	spin_lock(&m->lock);
+
 	printk("removeMsg: Mailbox PID = %d\n", m->key);
 
 	newMsg = m->messages[0];
 	if(newMsg == NULL){
 		printk(KERN_INFO "removeMsg: Message is NULL. Returning...\n");
+		spin_unlock(&m->lock);
 		return -1;
-	}
-
-	else {
-		printk(KERN_INFO "removeMsg: Message = %s\n", newMsg->msg);
-		printk(KERN_INFO "removeMsg: First character is %c\n", newMsg->msg[0]);
-		printk(KERN_INFO "removeMsg: Message length = %d\n", newMsg->len);
-
-		// Copy the string back to the receiving mailbox
-		if(copy_to_user(msg, newMsg->msg, newMsg->len)){
-			return EFAULT;
-		}
-
-		// Copy sender PID
-		if(copy_to_user(sender, &newMsg->sender, sizeof(pid_t))){
-			return EFAULT;
-		}
-
-		// Copy message length
-		if(copy_to_user(len, &newMsg->len, sizeof(int))){
-			return EFAULT;
-		}
 	}
 
 	// TODO: Add wait
@@ -285,17 +285,43 @@ int removeMsg(pid_t *sender, void *msg, int *len, bool block){
 	}
 
 	if(m->msgNum == 0 && m->stopped == false && !block){
+		spin_unlock(&m->lock);
 		return MAILBOX_EMPTY;
 	}
 
 	if(m->stopped){
 		if(m->msgNum == 0){
+			spin_unlock(&m->lock);
 			return MAILBOX_STOPPED;
 		}
 
 		printk(KERN_INFO "removeMsg: Message = %s\n", newMsg->msg);
 		msg = newMsg->msg;
 		len = (int *)newMsg->len;
+	}
+
+	else {
+		printk(KERN_INFO "removeMsg: Message = %s\n", newMsg->msg);
+		printk(KERN_INFO "removeMsg: First character is %c\n", newMsg->msg[0]);
+		printk(KERN_INFO "removeMsg: Message length = %d\n", newMsg->len);
+
+		// Copy the string back to the receiving mailbox
+		if(copy_to_user(msg, newMsg->msg, newMsg->len)){
+			spin_unlock(&m->lock);
+			return EFAULT;
+		}
+
+		// Copy sender PID
+		if(copy_to_user(sender, &newMsg->sender, sizeof(pid_t))){
+			spin_unlock(&m->lock);
+			return EFAULT;
+		}
+
+		// Copy message length
+		if(copy_to_user(len, &newMsg->len, sizeof(int))){
+			spin_unlock(&m->lock);
+			return EFAULT;
+		}
 	}
 
 	if(m->msgNum >= MAX_MAILBOX_SIZE && m->ref_counter > 0){
@@ -315,6 +341,7 @@ int removeMsg(pid_t *sender, void *msg, int *len, bool block){
 
 	m->msgNum--;
 	printk(KERN_INFO "*******************************************************************\n");
+	spin_unlock(&m->lock);
 	return 0;
 } // int removeMsg(int *sender, void *msg, int *len, bool block)
 
@@ -322,6 +349,8 @@ int insert(hashtable *h, int key){
 	mailbox *next, *last;
 	next = h->mailboxes[0];
 	last = NULL;
+
+	spin_lock(&main_lock);
 
 	// Traverse linked list to end
 	while(next != NULL){
@@ -335,6 +364,7 @@ int insert(hashtable *h, int key){
 
 	// At max size, make more space for pointers
 	if(h->boxNum == 32){
+		spin_unlock(&main_lock);
 		return -1;
 	}
 
@@ -343,6 +373,7 @@ int insert(hashtable *h, int key){
 		h->boxNum++;
 	}
 
+	spin_unlock(&main_lock);
 	return 0;
 } // int insert(hashtable *h, int key)
 
@@ -360,13 +391,16 @@ mailbox *getBox(hashtable *h, int key){
 
 	int i;
 
+	spin_lock(&main_lock);
 	for (i = 0; i < h->boxNum; i++){
 		if(h->mailboxes[i]->key == key){
+			spin_unlock(&main_lock);
 			return h->mailboxes[i];
 		}
 	}
 
 	printk("getBox: Returned null mailbox pointer\n");
+	spin_unlock(&main_lock);
 	return NULL;
 } // mailbox *getBox(hashtable *h, int key)
 
@@ -377,6 +411,7 @@ int remove(hashtable *h, int key){
 	mailbox *next = h->mailboxes[0];
 	i = 0;
 
+	spin_lock(&main_lock);
 	// Search for mailbox
 	while(next != NULL){
 		if(next->key == key){
@@ -395,6 +430,7 @@ int remove(hashtable *h, int key){
 
 			kmem_cache_free(mailbox_cache, &next); // Free mailbox in cache
 			h->boxNum--;
+			spin_unlock(&main_lock);
 			return 0;
 		}
 
@@ -403,6 +439,7 @@ int remove(hashtable *h, int key){
 		i++;
 	}
 
+	spin_unlock(&main_lock);
 	return MAILBOX_INVALID; // Mailbox not found in hashtable
 } // int remove(hashtable *h, int key)
 
