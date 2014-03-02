@@ -1,4 +1,12 @@
 KernelMailbox
 =============
 
-A LKM for use under a custom Linux kernel.
+Created by:
+Daniel Benson (djbenson)
+Michael Racine (mrracine)
+
+Top Directory:
+
+Message_LKM:
+
+Test:

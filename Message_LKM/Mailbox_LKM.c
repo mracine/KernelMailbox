@@ -26,6 +26,7 @@ hashtable *ht = NULL;
 asmlinkage long (*ref_cs3013_syscall1)(void);
 asmlinkage long (*ref_cs3013_syscall2)(void);
 asmlinkage long (*ref_cs3013_syscall3)(void);
+asmlinkage long (*ref_exit)(void);
 
 asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block) {
 	int err;
@@ -44,8 +45,9 @@ asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block) {
 
 	err = insertMsg(destination, msg, len, block);
 
+	// Error in sending the message
 	if(err != 0){
-		printk(KERN_INFO "SendMsg: Error %d", err);
+		printk(KERN_INFO "SendMsg: Error inserting message, error code %d", err);
 		return err;
 	}
 
@@ -58,19 +60,20 @@ asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block) {
 
 	// Mailbox cache
 	if(mailbox_cache == NULL){
-		mailbox_cache = kmem_cache_create("mailbox_cache", sizeof(mailbox), 0, 0, NULL);
+		mailbox_cache = kmem_cache_create("mailbox_cache", sizeof(mailbox) + sizeof(message *)*64, 0, 0, NULL);
 		ht = create();
 	}
 
 	// Message cache
 	if(message_cache == NULL){
-		message_cache = kmem_cache_create("message_cache", sizeof(message)*64, 0, 0, NULL);
+		message_cache = kmem_cache_create("message_cache", sizeof(message), 0, 0, NULL);
 	}
 
 	err = removeMsg(sender, msg, len, block);
 
+	// Error in removing the message
 	if(err != 0){
-		printk(KERN_INFO "RcvMsg: Error %d", err);
+		printk(KERN_INFO "RcvMsg: Error removing message, error code %d", err);
 		return err;
 	}
 
@@ -82,25 +85,28 @@ asmlinkage long ManageMailbox(bool stop, int *count){
 
 	// Mailbox cache
 	if(mailbox_cache == NULL){
-		mailbox_cache = kmem_cache_create("mailbox_cache", sizeof(mailbox), 0, 0, NULL);
+		mailbox_cache = kmem_cache_create("mailbox_cache", sizeof(mailbox) + sizeof(message *)*64, 0, 0, NULL);
 		ht = create();
 	}
 
 	// Message cache
 	if(message_cache == NULL){
-		message_cache = kmem_cache_create("message_cache", sizeof(message)*64, 0, 0, NULL);
+		message_cache = kmem_cache_create("message_cache", sizeof(message), 0, 0, NULL);
 	}
 
-	/*
 	if(m == NULL){
 		return MAILBOX_INVALID;
 	}
-	*/
 
-	copy_to_user(count, &m->msgNum, sizeof(int));
-	m->stopped = stop;
+	copy_to_user(count, &m->msgNum, sizeof(int)); // Copy the count to user
+	m->stopped = stop; // Copy boolean value from user
 	return 0;
 }	// asmlinkage long ManageMailbox(bool stop, int *count)
+
+asmlinkage long MailboxExit(void){
+	// Called when intercepting exit
+	return 0;
+} // asmlinkage long MailboxExit(void)
 
 hashtable *create(void){
 	int i;
@@ -111,15 +117,15 @@ hashtable *create(void){
 		return NULL;
 
 	// Allocate space for pointer of mailboxes
-	if((newHash->mailboxes = (mailbox **)kmalloc(sizeof(mailbox *)*32, GFP_KERNEL)) == NULL)
+	if((newHash->mailboxes = (mailbox **)kmalloc(sizeof(mailbox *)*64, GFP_KERNEL)) == NULL)
 		return NULL;
 
 	// Initialize hashtable
-	for(i = 0; i < 32; i++){
+	for(i = 0; i < 64; i++){
 		newHash->mailboxes[i] = NULL;
 	}
 
-	newHash->size = 32; // Allocate size to 32 mailbox pointers
+	newHash->size = 64; // Allocate size to 32 mailbox pointers
 	newHash->boxNum = 0; // Initialize number of mailboxes
 	return newHash;
 } // hashtable *create(void)
@@ -140,7 +146,11 @@ mailbox *createMailbox(int key){
 		newBox->messages[i] = NULL;
 	}
 
-	// We need to check the size of the hashtable to see if there is room here for this new mailbox pointer
+	// Check size of hashtable to see if there is room for a new mailbox pointer
+	if(ht->size == ht->boxNum){
+		printk(KERN_INFO "createMailbox: Error, need more space in hashtable for new mailbox\n");
+		return NULL;
+	}
 
 	// Set the last entry in the mailbox pointer list in the hash to the new box
 	ht->mailboxes[ht->boxNum] = newBox;
@@ -154,6 +164,8 @@ mailbox *createMailbox(int key){
 int insertMsg(pid_t dest, void *msg, int len, bool block){
 	mailbox *m = getBox(ht, dest);
 	message *newMsg = NULL;
+
+	printk(KERN_INFO "*************************** insertMsg *****************************\n");
 
 	// Mailbox does not exist in hashtable
 	if(m == NULL){
@@ -182,7 +194,6 @@ int insertMsg(pid_t dest, void *msg, int len, bool block){
 
 	// Initialize the new message struct to insert
 	newMsg = kmem_cache_alloc(message_cache, GFP_KERNEL);
-
 	newMsg->len = len;
 	newMsg->sender = current->pid;
 	copy_from_user(newMsg->msg, msg, len);
@@ -190,12 +201,11 @@ int insertMsg(pid_t dest, void *msg, int len, bool block){
 	m->messages[m->msgNum] = newMsg;
 	m->msgNum++;
 
-	printk(KERN_INFO "********************************************************\n");
 	printk(KERN_INFO "insertMsg: %d messages in this mailbox\n", m->msgNum);
 	printk(KERN_INFO "insertMsg: Mailbox PID = %d\n", m->key);
 	printk(KERN_INFO "insertMsg: New message = %s\n", m->messages[m->msgNum-1]->msg);
 	printk(KERN_INFO "insertMsg: Message length = %d", m->messages[m->msgNum-1]->len);
-	printk(KERN_INFO "********************************************************\n");
+	printk(KERN_INFO "*******************************************************************\n");
 
 	return 0;
 } // int insertMsg(int dest, char *msg, int len, bool block)
@@ -205,7 +215,7 @@ int removeMsg(pid_t *sender, void *msg, int *len, bool block){
 	mailbox *m = getBox(ht, current->pid);
 	message *newMsg = NULL;
 
-	printk(KERN_INFO "********************************************************\n");
+	printk(KERN_INFO "*************************** removeMsg *****************************\n");
 
 	if(m == NULL){
 		printk(KERN_INFO "removeMsg: Mailbox doesnt exist, creating new\n");
@@ -214,9 +224,8 @@ int removeMsg(pid_t *sender, void *msg, int *len, bool block){
 
 	printk("removeMsg: Mailbox PID = %d\n", m->key);
 
-	// Get the first message in the mailbox
 	newMsg = m->messages[0];
-	if (newMsg == NULL){
+	if(newMsg == NULL){
 		printk(KERN_INFO "removeMsg: Message is NULL. Returning...\n");
 		return -1;
 	}
@@ -231,19 +240,15 @@ int removeMsg(pid_t *sender, void *msg, int *len, bool block){
 			return EFAULT;
 		}
 
+		// Copy sender PID
 		if(copy_to_user(sender, &newMsg->sender, sizeof(pid_t))){
 			return EFAULT;
 		}
 
+		// Copy message length
 		if(copy_to_user(len, &newMsg->len, sizeof(int))){
 			return EFAULT;
 		}
-	}
-
-	// If the mailbox is not empty then get the first one. 
-	if(m->msgNum != 0){
-		msg = newMsg->msg;
-		len = (int *)newMsg->len;
 	}
 
 	// TODO: Add wait
@@ -277,6 +282,7 @@ int removeMsg(pid_t *sender, void *msg, int *len, bool block){
 	}
 
 	m->msgNum--;
+	printk(KERN_INFO "*******************************************************************\n");
 	return 0;
 } // int removeMsg(int *sender, void *msg, int *len, bool block)
 
@@ -347,7 +353,7 @@ int remove(hashtable *h, int key){
 
 			// Reposition array of mailboxes
 			for(j = i; j < h->size; j++){
-				h->mailboxes[j] = h->mailboxes[j+1];
+				h->mailboxes[j] = h->mailboxes[j + 1];
 			}
 
 			// Free up all messages
@@ -426,12 +432,14 @@ static int __init interceptor_start(void) {
 	ref_cs3013_syscall1 = (void *)sys_call_table[__NR_cs3013_syscall1];
 	ref_cs3013_syscall2 = (void *)sys_call_table[__NR_cs3013_syscall2];
 	ref_cs3013_syscall3 = (void *)sys_call_table[__NR_cs3013_syscall3];
+	ref_exit = (void *)sys_call_table[__NR_exit];
 
 	/* Intercept call */
 	disable_page_protection();
 	sys_call_table[__NR_cs3013_syscall1] = (unsigned long *)SendMsg;
 	sys_call_table[__NR_cs3013_syscall2] = (unsigned long *)RcvMsg;
 	sys_call_table[__NR_cs3013_syscall3] = (unsigned long *)ManageMailbox;
+	sys_call_table[__NR_exit] = (unsigned long *)MailboxExit;
 	enable_page_protection();
 	return 0;
 }	// static int __init interceptor_start(void)
@@ -446,6 +454,7 @@ static void __exit interceptor_end(void) {
 	sys_call_table[__NR_cs3013_syscall1] = (unsigned long *)ref_cs3013_syscall1;
 	sys_call_table[__NR_cs3013_syscall2] = (unsigned long *)ref_cs3013_syscall2;
 	sys_call_table[__NR_cs3013_syscall3] = (unsigned long *)ref_cs3013_syscall3;
+	sys_call_table[__NR_exit] = (unsigned long *)ref_exit;
 	enable_page_protection();
 }	// static void __exit interceptor_end(void)
 

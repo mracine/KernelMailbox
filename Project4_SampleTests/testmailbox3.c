@@ -23,13 +23,12 @@ int main() {
       int len;
       bool block = true;
       
-      RcvMsg(&sender,msg,&len,block);
-    
+      RcvMsg(&sender,msg,&len,block);   
       
       printf("Message: %s\n", (char *)msg);
       char myMesg[] = "I am your child";
       if(SendMsg(sender, myMesg, 16, block)) {
-	printf("Child send failed.\n");
+        printf("Child send failed.\n");
       }
       
       return 0;
@@ -37,7 +36,7 @@ int main() {
     else{
       char mesg[] = "I am your father";
       if (SendMsg(childPID, mesg, 17, false)){
-	printf("Send failed\n");
+        printf("Send failed\n");
       }
     }
   }
