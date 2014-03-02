@@ -31,6 +31,12 @@ asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block);
  * */
 asmlinkage long ManageMailbox(bool stop, int *count);
 /**
+ * Functions for exiting
+ *
+ * */
+// asmlinkage long MailboxExit(int error_code);
+// asmlinkage long MailboxExitGroup(int error_code);
+/**
  * Hashtable implementation
  *
  * */
@@ -58,6 +64,7 @@ typedef struct hashtable_s {
 	mailbox **mailboxes;
 } hashtable; // struct hashtable
 
+// void doExit(void);
 hashtable *create(void); // Initialize table to 16 mailboxes
 int insert(hashtable *h, int key);
 mailbox *getBox(hashtable *h, int key);

@@ -28,7 +28,8 @@ hashtable *ht = NULL;
 asmlinkage long (*ref_cs3013_syscall1)(void);
 asmlinkage long (*ref_cs3013_syscall2)(void);
 asmlinkage long (*ref_cs3013_syscall3)(void);
-asmlinkage long (*ref_exit)(void);
+// asmlinkage long (*ref_sys_exit)(int error_code);
+// asmlinkage long (*ref_sys_exit_group)(int error_code);
 
 asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block) {
 	int err;
@@ -105,10 +106,22 @@ asmlinkage long ManageMailbox(bool stop, int *count){
 	return 0;
 }	// asmlinkage long ManageMailbox(bool stop, int *count)
 
-asmlinkage long MailboxExit(void){
-	// Called when intercepting exit
-	return 0;
+/*
+asmlinkage long MailboxExit(int error_code){
+	doExit();
+	return ref_sys_exit(error_code);
 } // asmlinkage long MailboxExit(void)
+
+asmlinkage long MailboxExitGroup(int error_code){
+	doExit();
+	return ref_sys_exit_group(error_code);
+} // asmlinkage long MailboxExitGroup(int error_code)
+
+void doExit(void){
+	int currentPID = current->pid;
+	remove(ht, currentPID);
+}
+*/
 
 hashtable *create(void){
 	int i;
@@ -451,14 +464,16 @@ static int __init interceptor_start(void) {
 	ref_cs3013_syscall1 = (void *)sys_call_table[__NR_cs3013_syscall1];
 	ref_cs3013_syscall2 = (void *)sys_call_table[__NR_cs3013_syscall2];
 	ref_cs3013_syscall3 = (void *)sys_call_table[__NR_cs3013_syscall3];
-	ref_exit = (void *)sys_call_table[__NR_exit];
+	// ref_sys_exit = (void *)sys_call_table[__NR_exit];
+	// ref_sys_exit_group = (void *)sys_call_table[__NR_exit_group];
 
 	/* Intercept call */
 	disable_page_protection();
 	sys_call_table[__NR_cs3013_syscall1] = (unsigned long *)SendMsg;
 	sys_call_table[__NR_cs3013_syscall2] = (unsigned long *)RcvMsg;
 	sys_call_table[__NR_cs3013_syscall3] = (unsigned long *)ManageMailbox;
-	sys_call_table[__NR_exit] = (unsigned long *)MailboxExit;
+	// sys_call_table[__NR_exit] = (unsigned long *)MailboxExit;
+	// sys_call_table[__NR_exit_group] = (unsigned long *)MailboxExitGroup;
 	enable_page_protection();
 	return 0;
 }	// static int __init interceptor_start(void)
@@ -473,7 +488,8 @@ static void __exit interceptor_end(void) {
 	sys_call_table[__NR_cs3013_syscall1] = (unsigned long *)ref_cs3013_syscall1;
 	sys_call_table[__NR_cs3013_syscall2] = (unsigned long *)ref_cs3013_syscall2;
 	sys_call_table[__NR_cs3013_syscall3] = (unsigned long *)ref_cs3013_syscall3;
-	sys_call_table[__NR_exit] = (unsigned long *)ref_exit;
+	// sys_call_table[__NR_exit] = (unsigned long *)ref_sys_exit;
+	// sys_call_table[__NR_exit_group] = (unsigned long *)ref_sys_exit_group;
 	enable_page_protection();
 }	// static void __exit interceptor_end(void)
 
