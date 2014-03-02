@@ -17,6 +17,8 @@
 #include <linux/mailbox.h>
 #include <linux/string.h>
 #include <linux/sched.h>
+#include <linux/wait.h>
+#include <linux/spinlock.h>
 
 unsigned long **sys_call_table;
 struct kmem_cache *mailbox_cache = NULL;
@@ -140,6 +142,9 @@ mailbox *createMailbox(int key){
 	newBox->msgNum = 0;
 	newBox->stopped = false;
 	newBox->next = NULL;
+	init_waitqueue_head(&newBox->read_queue);
+	init_waitqueue_head(&newBox->write_queue);
+	spin_lock_init(&newBox->lock);
 	
 	// Initialize messages to NULL
 	for(i = 0; i < MAX_MAILBOX_SIZE; i++){
@@ -179,7 +184,10 @@ int insertMsg(pid_t dest, void *msg, int len, bool block){
 
 	// TODO: Add wait
 	if(m->msgNum >= MAX_MAILBOX_SIZE && block == true){
-		// wait until the mailbox has room
+		m->ref_counter++;
+		wait_event(m->write_queue, m->msgNum < MAX_MAILBOX_SIZE);
+		printk(KERN_INFO "insertMsg: Process woken up\n");
+		m->ref_counter--;
 	}
 
 	// Check message length
@@ -206,6 +214,10 @@ int insertMsg(pid_t dest, void *msg, int len, bool block){
 	printk(KERN_INFO "insertMsg: New message = %s\n", m->messages[m->msgNum-1]->msg);
 	printk(KERN_INFO "insertMsg: Message length = %d", m->messages[m->msgNum-1]->len);
 	printk(KERN_INFO "*******************************************************************\n");
+
+	if(m->msgNum == 1 && m->ref_counter > 0){
+		wake_up(&m->read_queue);
+	}
 
 	return 0;
 } // int insertMsg(int dest, char *msg, int len, bool block)
@@ -253,7 +265,10 @@ int removeMsg(pid_t *sender, void *msg, int *len, bool block){
 
 	// TODO: Add wait
 	if(m->msgNum == 0 && m->stopped == false && block){
-		//
+		m->ref_counter++;
+		wait_event(m->read_queue, m->msgNum > 0);
+		printk(KERN_INFO "removeMsg: Process woken up\n");
+		m->ref_counter--;
 	}
 
 	if(m->msgNum == 0 && m->stopped == false && !block){
@@ -268,6 +283,10 @@ int removeMsg(pid_t *sender, void *msg, int *len, bool block){
 		printk(KERN_INFO "removeMsg: Message = %s\n", newMsg->msg);
 		msg = newMsg->msg;
 		len = (int *)newMsg->len;
+	}
+
+	if(m->msgNum >= MAX_MAILBOX_SIZE && m->ref_counter > 0){
+		wake_up(&m->write_queue);
 	}
 
 	// Update the array of messages inside the mailbox

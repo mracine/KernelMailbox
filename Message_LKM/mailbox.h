@@ -8,6 +8,8 @@
 #include <stdbool.h>
 #include <linux/types.h>
 #include <linux/slab.h>
+#include <linux/wait.h>
+#include <linux/spinlock.h>
 
 #define NO_BLOCK 0
 #define BLOCK   1
@@ -45,6 +47,9 @@ typedef struct mailbox_s {
 	bool stopped;
 	message *messages[64];
 	struct mailbox_s *next;
+	wait_queue_head_t read_queue;
+	wait_queue_head_t write_queue;
+	spinlock_t lock;
 } mailbox; // struct mailbox
 
 typedef struct hashtable_s {
