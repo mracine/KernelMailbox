@@ -29,8 +29,8 @@ static spinlock_t main_lock;
 asmlinkage long (*ref_cs3013_syscall1)(void);
 asmlinkage long (*ref_cs3013_syscall2)(void);
 asmlinkage long (*ref_cs3013_syscall3)(void);
-// asmlinkage long (*ref_sys_exit)(int error_code);
-// asmlinkage long (*ref_sys_exit_group)(int error_code);
+asmlinkage long (*ref_sys_exit)(int error_code);
+asmlinkage long (*ref_sys_exit_group)(int error_code);
 
 asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block) {
 	int err;
@@ -110,7 +110,7 @@ asmlinkage long ManageMailbox(bool stop, int *count){
 	return 0;
 }	// asmlinkage long ManageMailbox(bool stop, int *count)
 
-/*
+
 asmlinkage long MailboxExit(int error_code){
 	doExit();
 	return ref_sys_exit(error_code);
@@ -123,9 +123,8 @@ asmlinkage long MailboxExitGroup(int error_code){
 
 void doExit(void){
 	int currentPID = current->pid;
-	remove(ht, currentPID);
+	remove(currentPID);
 }
-*/
 
 hashtable *create(void){
 	int i;
@@ -404,43 +403,52 @@ mailbox *getBox(hashtable *h, int key){
 	return NULL;
 } // mailbox *getBox(hashtable *h, int key)
 
-int remove(hashtable *h, int key){
+int remove(int key){
 	int i, j;
-	mailbox *temp = NULL;
-	mailbox *prev = h->mailboxes[0];
-	mailbox *next = h->mailboxes[0];
+	mailbox *temp;
+	mailbox *prev;
+	mailbox *next;
 	i = 0;
 
 	spin_lock(&main_lock);
+
+	if (ht != NULL) {
 	// Search for mailbox
-	while(next != NULL){
-		if(next->key == key){
-			temp = next->next;
-			prev->next = temp;
+		prev = ht->mailboxes[0];
+		next = ht->mailboxes[0];
 
-			// Reposition array of mailboxes
-			for(j = i; j < h->size; j++){
-				h->mailboxes[j] = h->mailboxes[j + 1];
+		while(next != NULL){
+			if(next->key == key){
+				temp = next->next;
+				prev->next = temp;
+
+				// Reposition array of mailboxes
+				for(j = i; j < ht->size; j++){
+					ht->mailboxes[j] = ht->mailboxes[j + 1];
+				}
+
+				// Free up all messages
+				for(j = 0; j < next->msgNum; j++){
+					kmem_cache_free(message_cache, &next->messages[j]);
+				}
+
+				kmem_cache_free(mailbox_cache, &next); // Free mailbox in cache
+				ht->boxNum--;
+				spin_unlock(&main_lock);
+				return 0;
 			}
 
-			// Free up all messages
-			for(j = 0; j < next->msgNum; j++){
-				kmem_cache_free(message_cache, &next->messages[j]);
-			}
-
-			kmem_cache_free(mailbox_cache, &next); // Free mailbox in cache
-			h->boxNum--;
-			spin_unlock(&main_lock);
-			return 0;
+			prev = next;
+			next = next->next;
+			i++;
 		}
 
-		prev = next;
-		next = next->next;
-		i++;
+		spin_unlock(&main_lock);
+		return MAILBOX_INVALID; // Mailbox not found in hashtable
 	}
 
 	spin_unlock(&main_lock);
-	return MAILBOX_INVALID; // Mailbox not found in hashtable
+	return 0;
 } // int remove(hashtable *h, int key)
 
 static unsigned long **find_sys_call_table(void) {
@@ -501,16 +509,16 @@ static int __init interceptor_start(void) {
 	ref_cs3013_syscall1 = (void *)sys_call_table[__NR_cs3013_syscall1];
 	ref_cs3013_syscall2 = (void *)sys_call_table[__NR_cs3013_syscall2];
 	ref_cs3013_syscall3 = (void *)sys_call_table[__NR_cs3013_syscall3];
-	// ref_sys_exit = (void *)sys_call_table[__NR_exit];
-	// ref_sys_exit_group = (void *)sys_call_table[__NR_exit_group];
+	ref_sys_exit = (void *)sys_call_table[__NR_exit];
+	ref_sys_exit_group = (void *)sys_call_table[__NR_exit_group];
 
 	/* Intercept call */
 	disable_page_protection();
 	sys_call_table[__NR_cs3013_syscall1] = (unsigned long *)SendMsg;
 	sys_call_table[__NR_cs3013_syscall2] = (unsigned long *)RcvMsg;
 	sys_call_table[__NR_cs3013_syscall3] = (unsigned long *)ManageMailbox;
-	// sys_call_table[__NR_exit] = (unsigned long *)MailboxExit;
-	// sys_call_table[__NR_exit_group] = (unsigned long *)MailboxExitGroup;
+	sys_call_table[__NR_exit] = (unsigned long *)MailboxExit;
+	sys_call_table[__NR_exit_group] = (unsigned long *)MailboxExitGroup;
 	enable_page_protection();
 	return 0;
 }	// static int __init interceptor_start(void)
@@ -525,9 +533,11 @@ static void __exit interceptor_end(void) {
 	sys_call_table[__NR_cs3013_syscall1] = (unsigned long *)ref_cs3013_syscall1;
 	sys_call_table[__NR_cs3013_syscall2] = (unsigned long *)ref_cs3013_syscall2;
 	sys_call_table[__NR_cs3013_syscall3] = (unsigned long *)ref_cs3013_syscall3;
-	// sys_call_table[__NR_exit] = (unsigned long *)ref_sys_exit;
-	// sys_call_table[__NR_exit_group] = (unsigned long *)ref_sys_exit_group;
+	sys_call_table[__NR_exit] = (unsigned long *)ref_sys_exit;
+	sys_call_table[__NR_exit_group] = (unsigned long *)ref_sys_exit_group;
 	enable_page_protection();
+
+	
 }	// static void __exit interceptor_end(void)
 
 module_init(interceptor_start);
