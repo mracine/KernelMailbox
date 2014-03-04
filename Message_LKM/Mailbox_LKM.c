@@ -113,7 +113,7 @@ asmlinkage long MailboxExit(int error_code){
 } // asmlinkage long MailboxExit(void)
 
 asmlinkage long MailboxExitGroup(int error_code){
-	//doExit();
+	// doExit();
 	return ref_sys_exit_group(error_code);
 } // asmlinkage long MailboxExitGroup(int error_code)
 
@@ -169,12 +169,18 @@ mailbox *createMailbox(pid_t key){
 
 	// Check size of hashtable to see if there is room for a new mailbox pointer
 	if(ht->size == ht->boxNum){
-		printk(KERN_INFO "createMailbox: Error, need more space in hashtable for new mailbox\n");
-		return NULL;
+		printk(KERN_INFO "createMailbox: Need more space in hashtable for new mailbox. Reallocating...\n");
+		ht->mailboxes = (mailbox **)krealloc(ht->mailboxes, 2*ht->size*sizeof(mailbox *), GFP_KERNEL);
+		ht->size = 2*ht->size;
 	}
 
-	// Set the last entry in the mailbox pointer list in the hash to the new box
-	ht->mailboxes[ht->boxNum] = newBox;
+	// Insert at the first null pointer
+	for(i = 0; i < ht->size; i++){
+		if(ht->mailboxes[i] == NULL){
+			ht->mailboxes[i] = newBox;
+			break;
+		}
+	}
 
 	// Increment hashtable allocated size
 	// Race condition here
@@ -321,6 +327,8 @@ int removeMsg(pid_t *sender, void *msg, int *len, bool block){
 			spin_unlock(&m->lock);
 			return EFAULT;
 		}
+
+		kmem_cache_free(message_cache, &newMsg);
 	}
 
 	else {
@@ -345,6 +353,8 @@ int removeMsg(pid_t *sender, void *msg, int *len, bool block){
 			spin_unlock(&m->lock);
 			return EFAULT;
 		}
+
+		kmem_cache_free(message_cache, &newMsg);
 	}
 
 	if(m->msgNum >= MAX_MAILBOX_SIZE && m->ref_counter > 0){
@@ -430,7 +440,7 @@ mailbox *getBox(pid_t key){
 int remove(pid_t key){
 	int i, j;
 
-	if (ht != NULL) {
+	if(ht != NULL){
 		spin_lock(&ht->main_lock);
 
 		for(i = 0; i < ht->boxNum; i++){
@@ -440,7 +450,7 @@ int remove(pid_t key){
 				wake_up_all(&ht->mailboxes[i]->queue);
 
 				// Free up all messages
-				for(j = 0; j < MAX_MAILBOX_SIZE; j++){
+				for(j = 0; j < ht->mailboxes[i]->msgNum; j++){
 					kmem_cache_free(message_cache, &ht->mailboxes[i]->messages[j]);
 				}
 
@@ -450,9 +460,9 @@ int remove(pid_t key){
 				ht->boxNum--;
 
 				// Reposition array of mailboxes
-				for(j = i; j < ht->boxNum; j++){
-					ht->mailboxes[j] = ht->mailboxes[j + 1];
-				}
+				//for(j = i; j < ht->boxNum; j++){
+				//	ht->mailboxes[j] = ht->mailboxes[j + 1];
+				//}
 
 				spin_unlock(&ht->main_lock);
 				return 0;
@@ -540,31 +550,40 @@ static int __init interceptor_start(void) {
 
 static void __exit interceptor_end(void) {
 	/* If we don't know what the syscall table is, don't bother. */
-	//int i, j;
+	int i;
 
 	if(!sys_call_table)
 		return;
 
 	/* Revert all system calls to what they were before we began. */
 	disable_page_protection();
+	printk(KERN_INFO "interceptor_end: Page protection disabled\n");
 	sys_call_table[__NR_cs3013_syscall1] = (unsigned long *)ref_cs3013_syscall1;
 	sys_call_table[__NR_cs3013_syscall2] = (unsigned long *)ref_cs3013_syscall2;
 	sys_call_table[__NR_cs3013_syscall3] = (unsigned long *)ref_cs3013_syscall3;
 	sys_call_table[__NR_exit] = (unsigned long *)ref_sys_exit;
 	sys_call_table[__NR_exit_group] = (unsigned long *)ref_sys_exit_group;
+	printk(KERN_INFO "interceptor_end: Re-enabling page protection\n");
 	enable_page_protection();
 
-	//for(i = 0; i < ht->size; i++){
-	//	for(j = 0; j < MAX_MAILBOX_SIZE; j++){
-	//		kmem_cache_free(message_cache, ht->mailboxes[i]->messages[j]);
-	//	}
-	//	
-	//	kmem_cache_free(mailbox_cache, ht->mailboxes[i]);
-	//}
+	for(i = 0; i < ht->size; i++){
+		if(ht->mailboxes[i] == NULL){
+			kfree(ht->mailboxes[i]);
+		}
 
-	//kmem_cache_destroy(message_cache);
-	//kmem_cache_destroy(mailbox_cache);
-	//kfree(ht);
+		else{
+			printk(KERN_INFO "interceptor_end: Removing mailbox PID %d\n", ht->mailboxes[i]->key);
+			remove(ht->mailboxes[i]->key);
+		}
+	}
+
+	kmem_cache_destroy(message_cache);
+	printk(KERN_INFO "interceptor_end: Destroyed message cache\n");
+	kmem_cache_destroy(mailbox_cache);
+	printk(KERN_INFO "interceptor_end: Destroyed mailbox cache\n");
+	kfree(ht);
+
+	printk(KERN_INFO "interceptor_end: Mailbox_LKM successfully unloaded\n");
 	
 }	// static void __exit interceptor_end(void)
 
