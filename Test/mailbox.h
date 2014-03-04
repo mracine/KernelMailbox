@@ -6,6 +6,7 @@
 #define __MAILBOX__
 
 #include <stdbool.h>
+#include <unistd.h>
 #include <linux/types.h>
 
 #define NO_BLOCK 0
@@ -16,14 +17,14 @@
  * Functions for msgs
  * 
  * */
-asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block);
-asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block);
+long SendMsg(pid_t dest, void *msg, int len, bool block);
+long RcvMsg(pid_t *sender, void *msg, int *len, bool block);
 
 /**
  * functions for maintaining mailboxes
  * 
  * */
-asmlinkage long ManageMailbox(bool stop, int *count);
+long ManageMailbox(bool stop, int *count);
 
 /**
  * error codes pertaining to mailboxes

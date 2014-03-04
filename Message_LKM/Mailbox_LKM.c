@@ -550,7 +550,7 @@ static int __init interceptor_start(void) {
 
 static void __exit interceptor_end(void) {
 	/* If we don't know what the syscall table is, don't bother. */
-	int i;
+	// int i;
 
 	if(!sys_call_table)
 		return;
@@ -566,6 +566,7 @@ static void __exit interceptor_end(void) {
 	printk(KERN_INFO "interceptor_end: Re-enabling page protection\n");
 	enable_page_protection();
 
+	/*
 	for(i = 0; i < ht->size; i++){
 		if(ht->mailboxes[i] == NULL){
 			kfree(ht->mailboxes[i]);
@@ -584,6 +585,7 @@ static void __exit interceptor_end(void) {
 	kfree(ht);
 
 	printk(KERN_INFO "interceptor_end: Mailbox_LKM successfully unloaded\n");
+	*/
 	
 }	// static void __exit interceptor_end(void)
 
