@@ -47,14 +47,13 @@ typedef struct message_s {
 } message;
 
 typedef struct mailbox_s {
-	int key; // PID
+	pid_t key; // PID
 	int msgNum; // Number of messages
 	int ref_counter; // Ref counter for when a mailbox is stopped
 	bool stopped;
 	message *messages[64];
 	struct mailbox_s *next;
-	wait_queue_head_t read_queue;
-	wait_queue_head_t write_queue;
+	wait_queue_head_t queue;
 	spinlock_t lock;
 } mailbox; // struct mailbox
 
@@ -62,12 +61,13 @@ typedef struct hashtable_s {
 	int size;
 	int boxNum;
 	mailbox **mailboxes;
+	spinlock_t main_lock;
 } hashtable; // struct hashtable
 
 void doExit(void);
 hashtable *create(void); // Initialize table to 16 mailboxes
-int insert(hashtable *h, int key);
-mailbox *getBox(hashtable *h, int key);
+int insert(int key);
+mailbox *getBox(int key);
 int remove(int key);
 mailbox *createMailbox(int key);
 int insertMsg(pid_t dest, void *msg, int len, bool block);
