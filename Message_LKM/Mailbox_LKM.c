@@ -49,10 +49,10 @@ asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block) {
 	err = insertMsg(destination, msg, len, block);
 
 	// Error in sending the message
-	if(err != 0){
-		printk(KERN_INFO "SendMsg: Error inserting message, error code %d\n", err);
-		return err;
-	}
+	//if(err != 0){
+	//	printk(KERN_INFO "SendMsg: Error inserting message, error code %d\n", err);
+	//	return err;
+	//}
 
 	return 0;
 }	// asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block)
@@ -103,15 +103,12 @@ asmlinkage long ManageMailbox(bool stop, int *count){
 
 	copy_to_user(count, &m->msgNum, sizeof(int)); // Copy the count to user
 	m->stopped = stop; // Copy boolean value from user
-	printk(KERN_INFO "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii\n");
-	printk(KERN_INFO "Changed PID %d stopped variable to: %d\n", current->pid, m->stopped);
-	printk(KERN_INFO "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii\n");
+	printk(KERN_INFO "ManageMailbox: Changed PID %d stopped variable to: %d\n", current->pid, m->stopped);
 	return 0;
 }	// asmlinkage long ManageMailbox(bool stop, int *count)
 
 
 asmlinkage long MailboxExit(int error_code){
-	//doExit();
 	return ref_sys_exit(error_code);
 } // asmlinkage long MailboxExit(void)
 
@@ -213,6 +210,11 @@ int insertMsg(pid_t dest, void *msg, int len, bool block){
 	if(m->msgNum >= MAX_MAILBOX_SIZE && block == true){
 		m->ref_counter++;
 		wait_event(m->queue, m->msgNum < MAX_MAILBOX_SIZE);
+
+		if (m == NULL){
+			return MAILBOX_INVALID;
+		}
+
 		printk(KERN_INFO "insertMsg: Process woken up\n");
 		m->ref_counter--;
 	}
@@ -278,6 +280,11 @@ int removeMsg(pid_t *sender, void *msg, int *len, bool block){
 	if(m->msgNum == 0 && m->stopped == false && block){
 		m->ref_counter++;
 		wait_event(m->queue, m->msgNum > 0);
+
+		if (m == NULL){
+			return MAILBOX_INVALID;
+		}
+
 		printk(KERN_INFO "removeMsg: Process woken up\n");
 		m->ref_counter--;
 	}
@@ -422,49 +429,40 @@ mailbox *getBox(pid_t key){
 
 int remove(pid_t key){
 	int i, j;
-	mailbox *temp;
-	mailbox *prev;
-	mailbox *next;
-	i = 0;
-
-	spin_lock(&ht->main_lock);
 
 	if (ht != NULL) {
-	// Search for mailbox
-		prev = ht->mailboxes[0];
-		next = ht->mailboxes[0];
+		spin_lock(&ht->main_lock);
 
-		while(next != NULL){
-			if(next->key == key){
-				temp = next->next;
-				prev->next = temp;
+		for(i = 0; i < ht->boxNum; i++){
+			if(ht->mailboxes[i]->key == key){
+				printk(KERN_INFO "remove: Mailbox %d found\n", ht->mailboxes[i]->key);
+
+				wake_up_all(&ht->mailboxes[i]->queue);
+
+				// Free up all messages
+				for(j = 0; j < MAX_MAILBOX_SIZE; j++){
+					kmem_cache_free(message_cache, &ht->mailboxes[i]->messages[j]);
+				}
+
+				printk(KERN_INFO "remove: Messages freed from Mailbox PID %d\n", ht->mailboxes[i]->key);
+				kmem_cache_free(mailbox_cache, &ht->mailboxes[i]); // Free mailbox in cache
+				printk(KERN_INFO "remove: Mailbox successfully deleted\n");
+				ht->boxNum--;
 
 				// Reposition array of mailboxes
-				for(j = i; j < ht->size; j++){
+				for(j = i; j < ht->boxNum; j++){
 					ht->mailboxes[j] = ht->mailboxes[j + 1];
 				}
 
-				// Free up all messages
-				for(j = 0; j < next->msgNum; j++){
-					kmem_cache_free(message_cache, &next->messages[j]);
-				}
-
-				kmem_cache_free(mailbox_cache, &next); // Free mailbox in cache
-				ht->boxNum--;
 				spin_unlock(&ht->main_lock);
 				return 0;
 			}
-
-			prev = next;
-			next = next->next;
-			i++;
 		}
 
 		spin_unlock(&ht->main_lock);
 		return MAILBOX_INVALID; // Mailbox not found in hashtable
 	}
 
-	spin_unlock(&ht->main_lock);
 	return 0;
 } // int remove(hashtable *h, int key)
 
@@ -542,6 +540,8 @@ static int __init interceptor_start(void) {
 
 static void __exit interceptor_end(void) {
 	/* If we don't know what the syscall table is, don't bother. */
+	//int i, j;
+
 	if(!sys_call_table)
 		return;
 
@@ -554,6 +554,17 @@ static void __exit interceptor_end(void) {
 	sys_call_table[__NR_exit_group] = (unsigned long *)ref_sys_exit_group;
 	enable_page_protection();
 
+	//for(i = 0; i < ht->size; i++){
+	//	for(j = 0; j < MAX_MAILBOX_SIZE; j++){
+	//		kmem_cache_free(message_cache, ht->mailboxes[i]->messages[j]);
+	//	}
+	//	
+	//	kmem_cache_free(mailbox_cache, ht->mailboxes[i]);
+	//}
+
+	//kmem_cache_destroy(message_cache);
+	//kmem_cache_destroy(mailbox_cache);
+	//kfree(ht);
 	
 }	// static void __exit interceptor_end(void)
 
