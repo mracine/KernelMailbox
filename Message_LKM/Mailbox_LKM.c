@@ -141,7 +141,7 @@ hashtable *create(void){
 		newHash->mailboxes[i] = NULL;
 	}
 
-	newHash->size = 64; // Allocate size to 32 mailbox pointers
+	newHash->size = 64; // Allocate size to 64 mailbox pointers
 	newHash->boxNum = 0; // Initialize number of mailboxes
 	spin_lock_init(&newHash->main_lock);
 	return newHash;
@@ -396,7 +396,7 @@ int insert(pid_t key){
 	last->next = next;
 
 	// At max size, make more space for pointers
-	if(ht->boxNum == 32){
+	if(ht->boxNum == 64){
 		spin_unlock(&ht->main_lock);
 		return -1;
 	}
@@ -550,7 +550,7 @@ static int __init interceptor_start(void) {
 
 static void __exit interceptor_end(void) {
 	/* If we don't know what the syscall table is, don't bother. */
-	// int i;
+	//int i;
 
 	if(!sys_call_table)
 		return;
@@ -566,26 +566,24 @@ static void __exit interceptor_end(void) {
 	printk(KERN_INFO "interceptor_end: Re-enabling page protection\n");
 	enable_page_protection();
 
-	/*
-	for(i = 0; i < ht->size; i++){
-		if(ht->mailboxes[i] == NULL){
-			kfree(ht->mailboxes[i]);
-		}
+	//for(i = 0; i < ht->size; i++){
+	//	if(ht->mailboxes[i] == NULL){
+	//		kfree(ht->mailboxes[i]);
+	//	}
 
-		else{
-			printk(KERN_INFO "interceptor_end: Removing mailbox PID %d\n", ht->mailboxes[i]->key);
-			remove(ht->mailboxes[i]->key);
-		}
-	}
+	//	else{
+	//		printk(KERN_INFO "interceptor_end: Removing mailbox PID %d\n", ht->mailboxes[i]->key);
+	//		remove(ht->mailboxes[i]->key);
+	//	}
+	//}
 
-	kmem_cache_destroy(message_cache);
-	printk(KERN_INFO "interceptor_end: Destroyed message cache\n");
-	kmem_cache_destroy(mailbox_cache);
-	printk(KERN_INFO "interceptor_end: Destroyed mailbox cache\n");
-	kfree(ht);
+	//kmem_cache_destroy(message_cache);
+	//printk(KERN_INFO "interceptor_end: Destroyed message cache\n");
+	//kmem_cache_destroy(mailbox_cache);
+	//printk(KERN_INFO "interceptor_end: Destroyed mailbox cache\n");
+	//kfree(ht);
 
-	printk(KERN_INFO "interceptor_end: Mailbox_LKM successfully unloaded\n");
-	*/
+	//printk(KERN_INFO "interceptor_end: Mailbox_LKM successfully unloaded\n");
 	
 }	// static void __exit interceptor_end(void)
 
