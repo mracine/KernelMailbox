@@ -1,3 +1,0 @@
-For help with generating ssh keys with git
-
-https://help.github.com/articles/generating-ssh-keys
