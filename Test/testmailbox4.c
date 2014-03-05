@@ -1,8 +1,5 @@
-/* Alfredo Porras
- * July 12th, 2011
- * CS 3013
- * Project 4 - test program 4
- * Test message flushing
+/* Daniel Benson(djbenson) and Michael Racine(mrracine)
+ * Project4
  */
 
 #include "mailbox.h"

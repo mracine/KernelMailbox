@@ -20,10 +20,50 @@
 #include <linux/wait.h>
 #include <linux/spinlock.h>
 
+#define MAX_MSG_SIZE 128
+#define MAX_MAILBOX_SIZE 64
+#define MAX_MAILBOXES 32
+
+asmlinkage long MailboxExit(int error_code);
+asmlinkage long MailboxExitGroup(int error_code);
+
+void doExit(void);
+struct hashtable *create(void);
+struct mailbox *createMailbox(pid_t key);
+int insertMsg(pid_t dest, void *msg, int len, bool block);
+int removeMsg(pid_t *sender, void *msg, int *len, bool block);
+int insert(pid_t key);
+struct mailbox *getBox(pid_t key);
+int remove(struct mailbox *m);
+
 unsigned long **sys_call_table;
 struct kmem_cache *mailbox_cache = NULL;
 struct kmem_cache *message_cache = NULL;
-hashtable *ht = NULL;
+struct hashtable *ht = NULL;
+
+struct message {
+	int len;
+	pid_t sender;
+	char msg[MAX_MSG_SIZE];
+};
+
+struct mailbox {
+	pid_t key; // PID
+	int msgNum; // Number of messages
+	int ref_counter; // Ref counter for when a mailbox is stopped
+	bool stopped;
+	struct message *messages[64];
+	struct mailbox *next;
+	wait_queue_head_t queue;
+	spinlock_t lock;
+}; // struct mailbox
+
+struct hashtable {
+	int size;
+	int boxNum;
+	struct mailbox **mailboxes;
+	spinlock_t main_lock;
+}; // struct hashtable
 
 asmlinkage long (*ref_cs3013_syscall1)(void);
 asmlinkage long (*ref_cs3013_syscall2)(void);
@@ -37,13 +77,13 @@ asmlinkage long SendMsg(pid_t dest, void *msg, int len, bool block) {
 
 	// Mailbox cache
 	if(mailbox_cache == NULL){
-		mailbox_cache = kmem_cache_create("mailbox_cache", sizeof(mailbox) + sizeof(message *)*64, 0, 0, NULL);
+		mailbox_cache = kmem_cache_create("mailbox_cache", sizeof(struct mailbox) + sizeof(struct message *)*64, 0, 0, NULL);
 		ht = create();
 	}
 
 	// Message cache
 	if(message_cache == NULL){
-		message_cache = kmem_cache_create("message_cache", sizeof(message), 0, 0, NULL);
+		message_cache = kmem_cache_create("message_cache", sizeof(struct message), 0, 0, NULL);
 	}
 
 	err = insertMsg(destination, msg, len, block);
@@ -63,13 +103,13 @@ asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block) {
 
 	// Mailbox cache
 	if(mailbox_cache == NULL){
-		mailbox_cache = kmem_cache_create("mailbox_cache", sizeof(mailbox) + sizeof(message *)*64, 0, 0, NULL);
+		mailbox_cache = kmem_cache_create("mailbox_cache", sizeof(struct mailbox) + sizeof(struct message *)*64, 0, 0, NULL);
 		ht = create();
 	}
 
 	// Message cache
 	if(message_cache == NULL){
-		message_cache = kmem_cache_create("message_cache", sizeof(message), 0, 0, NULL);
+		message_cache = kmem_cache_create("message_cache", sizeof(struct message), 0, 0, NULL);
 	}
 
 	err = removeMsg(sender, msg, len, block);
@@ -84,17 +124,17 @@ asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block) {
 }	// asmlinkage long RcvMsg(pid_t *sender, void *msg, int *len, bool block)
 
 asmlinkage long ManageMailbox(bool stop, int *count){
-	mailbox *m = getBox(current->pid);
+	struct mailbox *m = getBox(current->pid);
 
 	// Mailbox cache
 	if(mailbox_cache == NULL){
-		mailbox_cache = kmem_cache_create("mailbox_cache", sizeof(mailbox) + sizeof(message *)*64, 0, 0, NULL);
+		mailbox_cache = kmem_cache_create("mailbox_cache", sizeof(struct mailbox) + sizeof(struct message *)*64, 0, 0, NULL);
 		ht = create();
 	}
 
 	// Message cache
 	if(message_cache == NULL){
-		message_cache = kmem_cache_create("message_cache", sizeof(message), 0, 0, NULL);
+		message_cache = kmem_cache_create("message_cache", sizeof(struct message), 0, 0, NULL);
 	}
 
 	if(m == NULL){
@@ -113,26 +153,26 @@ asmlinkage long MailboxExit(int error_code){
 } // asmlinkage long MailboxExit(void)
 
 asmlinkage long MailboxExitGroup(int error_code){
-	// doExit();
+	//doExit();
 	return ref_sys_exit_group(error_code);
 } // asmlinkage long MailboxExitGroup(int error_code)
 
 void doExit(void){
-	int currentPID = current->pid;
-	remove(currentPID);
+	struct mailbox *m = getBox(current->pid);
+	remove(m);
 }
 
-hashtable *create(void){
+struct hashtable *create(void){
 	int i;
-	hashtable *newHash;
+	struct hashtable *newHash;
 
 	// Allocate space for hashtable
-	if((newHash = (hashtable *)kmalloc(sizeof(hashtable), GFP_KERNEL)) == NULL){
+	if((newHash = (struct hashtable *)kmalloc(sizeof(struct hashtable), GFP_KERNEL)) == NULL){
 		return NULL;
 	}
 
 	// Allocate space for pointer of mailboxes
-	if((newHash->mailboxes = (mailbox **)kmalloc(sizeof(mailbox *)*64, GFP_KERNEL)) == NULL){
+	if((newHash->mailboxes = (struct mailbox **)kmalloc(sizeof(struct mailbox *)*64, GFP_KERNEL)) == NULL){
 		return NULL;
 	}
 
@@ -147,9 +187,9 @@ hashtable *create(void){
 	return newHash;
 } // hashtable *create(void)
 
-mailbox *createMailbox(pid_t key){
+struct mailbox *createMailbox(pid_t key){
 	int i;
-	mailbox *newBox = (mailbox *)kmem_cache_alloc(mailbox_cache, GFP_KERNEL); // Allocate mailbox from cache
+	struct mailbox *newBox = (struct mailbox *)kmem_cache_alloc(mailbox_cache, GFP_KERNEL); // Allocate mailbox from cache
 	
 	spin_lock(&ht->main_lock);
 
@@ -170,7 +210,7 @@ mailbox *createMailbox(pid_t key){
 	// Check size of hashtable to see if there is room for a new mailbox pointer
 	if(ht->size == ht->boxNum){
 		printk(KERN_INFO "createMailbox: Need more space in hashtable for new mailbox. Reallocating...\n");
-		ht->mailboxes = (mailbox **)krealloc(ht->mailboxes, 2*ht->size*sizeof(mailbox *), GFP_KERNEL);
+		ht->mailboxes = (struct mailbox **)krealloc(ht->mailboxes, 2*ht->size*sizeof(struct mailbox *), GFP_KERNEL);
 		ht->size = 2*ht->size;
 	}
 
@@ -190,8 +230,8 @@ mailbox *createMailbox(pid_t key){
 } // mailbox *createMailbox(int key)
 
 int insertMsg(pid_t dest, void *msg, int len, bool block){
-	mailbox *m = getBox(dest);
-	message *newMsg = NULL;
+	struct mailbox *m = getBox(dest);
+	struct message *newMsg = NULL;
 
 	printk(KERN_INFO "*************************** insertMsg *****************************\n");
 
@@ -204,6 +244,7 @@ int insertMsg(pid_t dest, void *msg, int len, bool block){
 	spin_lock(&m->lock);
 
 	if (m->stopped){
+		spin_unlock(&m->lock);
 		return MAILBOX_STOPPED;
 	}
 
@@ -261,8 +302,8 @@ int insertMsg(pid_t dest, void *msg, int len, bool block){
 
 int removeMsg(pid_t *sender, void *msg, int *len, bool block){
 	int i;
-	mailbox *m = getBox(current->pid);
-	message *newMsg = NULL;
+	struct mailbox *m = getBox(current->pid);
+	struct message *newMsg = NULL;
 
 	printk(KERN_INFO "*************************** removeMsg *****************************\n");
 
@@ -379,7 +420,7 @@ int removeMsg(pid_t *sender, void *msg, int *len, bool block){
 } // int removeMsg(int *sender, void *msg, int *len, bool block)
 
 int insert(pid_t key){
-	mailbox *next, *last;
+	struct mailbox *next, *last;
 	next = ht->mailboxes[0];
 	last = NULL;
 
@@ -410,7 +451,7 @@ int insert(pid_t key){
 	return 0;
 } // int insert(hashtable *h, int key)
 
-mailbox *getBox(pid_t key){
+struct mailbox *getBox(pid_t key){
 	//mailbox *next = h->mailboxes[0];
 
 	// If found, return mailbox *. Else return NULL
@@ -437,44 +478,47 @@ mailbox *getBox(pid_t key){
 	return NULL;
 } // mailbox *getBox(hashtable *h, int key)
 
-int remove(pid_t key){
-	int i, j;
+int remove(struct mailbox *m){
+	int i;
+	int *len = NULL;
 
 	if(ht != NULL){
 		spin_lock(&ht->main_lock);
 
-		for(i = 0; i < ht->boxNum; i++){
-			if(ht->mailboxes[i]->key == key){
-				printk(KERN_INFO "remove: Mailbox %d found\n", ht->mailboxes[i]->key);
+		ManageMailbox(true, len);
 
-				wake_up_all(&ht->mailboxes[i]->queue);
+		while(m->ref_counter > 0){
+			wake_up_all(&m->queue);
+			wait_event(m->queue, m->ref_counter == 0);
+		}
 
-				// Free up all messages
-				for(j = 0; j < ht->mailboxes[i]->msgNum; j++){
-					kmem_cache_free(message_cache, &ht->mailboxes[i]->messages[j]);
-				}
+		// Free up all messages
+		for(i = 0; i < m->msgNum; i++){
+			kmem_cache_free(message_cache, m->messages[i]);
+		}
 
-				printk(KERN_INFO "remove: Messages freed from Mailbox PID %d\n", ht->mailboxes[i]->key);
-				kmem_cache_free(mailbox_cache, &ht->mailboxes[i]); // Free mailbox in cache
-				printk(KERN_INFO "remove: Mailbox successfully deleted\n");
-				ht->boxNum--;
-
-				// Reposition array of mailboxes
-				//for(j = i; j < ht->boxNum; j++){
-				//	ht->mailboxes[j] = ht->mailboxes[j + 1];
-				//}
-
-				spin_unlock(&ht->main_lock);
-				return 0;
+		for(i = 0; i < ht->size; i++){
+			if(ht->mailboxes[i]->key == m->key){
+				ht->mailboxes[i] = NULL;
 			}
 		}
 
+		printk(KERN_INFO "remove: Messages freed from Mailbox PID %d\n", m->key);
+		kmem_cache_free(mailbox_cache, &m); // Free mailbox in cache
+		printk(KERN_INFO "remove: Mailbox successfully deleted\n");
+		ht->boxNum--;
+
+		// Reposition array of mailboxes
+		//for(j = i; j < ht->boxNum; j++){
+		//	ht->mailboxes[j] = ht->mailboxes[j + 1];
+		//}
+
 		spin_unlock(&ht->main_lock);
-		return MAILBOX_INVALID; // Mailbox not found in hashtable
+		return 0;
 	}
 
 	return 0;
-} // int remove(hashtable *h, int key)
+} // int remove(struct mailbox *m)
 
 static unsigned long **find_sys_call_table(void) {
 	unsigned long int offset = PAGE_OFFSET;
@@ -550,10 +594,24 @@ static int __init interceptor_start(void) {
 
 static void __exit interceptor_end(void) {
 	/* If we don't know what the syscall table is, don't bother. */
-	//int i;
+	// int i;
 
 	if(!sys_call_table)
 		return;
+
+	// for(i = 0; i < ht->size; i++){
+	// 	if(ht->mailboxes[i] != NULL){
+	// 		printk(KERN_INFO "interceptor_end: Removing mailbox PID %d\n", ht->mailboxes[i]->key);
+	// 		remove(ht->mailboxes[i]);
+	// 		kfree(ht->mailboxes[i]);
+	// 	}
+	// }
+
+	// kmem_cache_destroy(message_cache);
+	// printk(KERN_INFO "interceptor_end: Destroyed message cache\n");
+	// kmem_cache_destroy(mailbox_cache);
+	// printk(KERN_INFO "interceptor_end: Destroyed mailbox cache\n");
+	// kfree(ht);
 
 	/* Revert all system calls to what they were before we began. */
 	disable_page_protection();
@@ -566,24 +624,7 @@ static void __exit interceptor_end(void) {
 	printk(KERN_INFO "interceptor_end: Re-enabling page protection\n");
 	enable_page_protection();
 
-	//for(i = 0; i < ht->size; i++){
-	//	if(ht->mailboxes[i] == NULL){
-	//		kfree(ht->mailboxes[i]);
-	//	}
-
-	//	else{
-	//		printk(KERN_INFO "interceptor_end: Removing mailbox PID %d\n", ht->mailboxes[i]->key);
-	//		remove(ht->mailboxes[i]->key);
-	//	}
-	//}
-
-	//kmem_cache_destroy(message_cache);
-	//printk(KERN_INFO "interceptor_end: Destroyed message cache\n");
-	//kmem_cache_destroy(mailbox_cache);
-	//printk(KERN_INFO "interceptor_end: Destroyed mailbox cache\n");
-	//kfree(ht);
-
-	//printk(KERN_INFO "interceptor_end: Mailbox_LKM successfully unloaded\n");
+	printk(KERN_INFO "interceptor_end: Mailbox_LKM successfully unloaded\n");
 	
 }	// static void __exit interceptor_end(void)
 

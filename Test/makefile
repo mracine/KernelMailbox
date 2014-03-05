@@ -1,7 +1,5 @@
-# Alfredo Porras
-# July 12th, 2011
-# CS 3013
-# Project 4 - makefile
+# Daniel Benson(djbenson) and Michael Racine(mrracine)
+# Project4
 
 CFLAGS = -g -Wall
 

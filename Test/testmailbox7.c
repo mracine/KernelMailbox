@@ -1,12 +1,5 @@
-/* Alfredo Porras
- * July 12th, 2011
- * CS 3013
- * Project 4 - test program 7
- * Tests if mailbox can be deleted while other processes
- * are holding a pointer to it.
- * The only difference bewteen this test and test 5
- * is the time that the parent sleeps before exiting.
- * WARNING: RUNNING THIS TEST WILL CAUSE THE KERNEL TO CRASH
+/* Daniel Benson(djbenson) and Michael Racine(mrracine)
+ * Project4
  */
 
 #include "mailbox.h"

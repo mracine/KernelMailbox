@@ -1,14 +1,5 @@
-/* Alfredo Porras
- * July 12th, 2011
- * CS 3013
- * Project 4 - test program 2
- * Tests the mailbox to see if programs that chose to wait until able to send
- * a message behave properly.
- * The main process produces 50 children (defined in CHILD_NUM) and
- * sends a message to each child so that they know their parent's PID.
- * All 50 children respond (block == true) back to their parent,
- * making it very likely that the parent's mailbox will become full and some
- * of the children will have to wait for the parent to retrieve enough messages.
+/* Daniel Benson(djbenson) and Michael Racine(mrracine)
+ * Project4
  */
 
 #include "mailbox.h"

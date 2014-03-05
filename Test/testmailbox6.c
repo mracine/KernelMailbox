@@ -1,12 +1,5 @@
-/* Alfredo Porras
- * July 12th, 2011
- * CS 3013
- * Project 4 - test program 7
- * Tests if mailbox can be deleted while other processes
- * are holding a pointer to it.
- * Multiple threads are present in the parent process this time.
- * The mailbox is not deleted until the last thread exits.
- * Each thread sleeps for one more second than the previous one.
+/* Daniel Benson(djbenson) and Michael Racine(mrracine)
+ * Project4
  */
 
 #include "mailbox.h"

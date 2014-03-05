@@ -1,4 +1,4 @@
-# Michael Racine (mrracine)
+# Daniel Benson(djbenson) and Michael Racine(mrracine)
 # Project4
 # Makefile
 

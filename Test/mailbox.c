@@ -1,10 +1,7 @@
 /**
-* Adapted from CS-502 Project #3, Fall 2006
-*	originally submitted by Cliff Lindsay
-* Modified for CS-502, Summer 2011 by Alfredo Porras
-* Adapted for CS-502 at Cisco Systems, Fall 2011
-*
-*/
+ * Daniel Benson(djbenson) and Michael Racine(mrracine)
+ * Project4
+ */
 
 #include "mailbox.h"
 

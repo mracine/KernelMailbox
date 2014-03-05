@@ -1,8 +1,5 @@
-/* Alfredo Porras
- * July 12th, 2011
- * CS 3013
- * Project 4 - test program 1
- * Tests if messages can be sent and received.
+/* Daniel Benson(djbenson) and Michael Racine(mrracine)
+ * Project4
  */
 
 #include "mailbox.h"
